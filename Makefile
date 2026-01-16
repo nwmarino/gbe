@@ -1,5 +1,6 @@
-cc = gcc
-flags = -O0 -g -std=c99 -lm
+CC = gcc
+CFLAGS = -O0 -g $(shell pkg-config --cflags glfw3)
+LDFLAGS = -lGL $(shell pkg-config --libs glfw3)
 
 sources = source/gbe.c
 objects = $(sources:.c=.o)
@@ -7,10 +8,10 @@ objects = $(sources:.c=.o)
 all: gbe clean
 
 gbe: $(objects)
-	$(cc) $(flags) $^ -o $@
+	$(CC) $(LDFLAGS) $^ -o $@
 
 %.o: %.c
-	$(cc) $(flags) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $
+	rm -f $(objects)
