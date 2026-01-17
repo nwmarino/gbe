@@ -14,11 +14,9 @@ extern "C" {
 
 #define null ((void*) 0)
 
-typedef unsigned char byte;
-typedef signed char sbyte;
-
-typedef unsigned short word;
-typedef signed short sword;
+typedef unsigned char byte_t;
+typedef unsigned short word_t;
+typedef signed char bool_t;
 
 #ifdef __cplusplus
 }
