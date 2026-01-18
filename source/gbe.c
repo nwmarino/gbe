@@ -77,10 +77,15 @@ struct {
 byte_t cart[32768]; // 32kB cartridge [0x0000, 0x8000)
 byte_t vram[8192]; // 8kB video RAM [0x8000, 0xA000)
 byte_t sram[8192]; // 8kB switchable RAM [0xA000, 0xC000)
-byte_t iram[8192]; // 8kB internal RAM [0xC000, 0xE000), echoed
+byte_t iram[8192]; // 8kB internal RAM [0xC000, 0xE000), echoed [0xE000, 0xFE00)
 byte_t oram[256]; // 256 bytes sprite attrib RAM [0xFE00, 0xFEA0)
 byte_t iop[128]; // 128 bytes for io ports [0xFF00, 0xFF4C) 
 byte_t hram[128]; // 128 bytes internal RAM [0xFF80, 0xFFFF)
+
+struct {
+    uint64_t ticks;
+    bool_t stopped;
+} state = { .ticks = 0, .stopped = 0 };
 
 struct inst_t {
     char* dsym;
@@ -170,6 +175,147 @@ static void add_w(word_t* dest, word_t data) {
     }
 
     FLAGS_CLEAR(FLAG_N);
+}
+
+static void adc(byte_t data) {
+    if (FLAGS_IS_SET(FLAG_C)) {
+        data += 1;
+    }
+
+    int32_t res = registers.A + data;
+
+    if (res & 0xFF00) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
+
+    if (data == registers.A) {
+        FLAGS_SET(FLAG_Z);
+    } else {
+        FLAGS_CLEAR(FLAG_Z);
+    }
+
+    if (((data & 0x0F) + (registers.A & 0x0F)) > 0x0F) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
+
+    FLAGS_SET(FLAG_N);
+
+    registers.A = (byte_t)(res & 0xFF);
+}
+
+static void sbc(byte_t data) {
+    if (FLAGS_IS_SET(FLAG_C)) {
+        data += 1;
+    }
+
+    FLAGS_SET(FLAG_N);
+
+    if (data > registers.A) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
+
+    if (data == registers.A) {
+        FLAGS_SET(FLAG_Z);
+    } else {
+        FLAGS_CLEAR(FLAG_Z);
+    }
+
+    if ((data & 0x0F) > (registers.A & 0x0F)) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
+
+    registers.A -= data;
+}
+
+static void sub(byte_t data) {
+    FLAGS_SET(FLAG_N);
+
+    if (data > registers.A) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
+
+    if ((data & 0x0F) > (registers.A & 0x0F)) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
+
+    registers.A -= data;
+
+    if (registers.A) {
+        FLAGS_CLEAR(FLAG_Z);
+    } else {
+        FLAGS_SET(FLAG_Z);
+    }
+}
+
+static void and(byte_t data) {
+    registers.A &= data;
+
+    if (registers.A) {
+        FLAGS_CLEAR(FLAG_Z);
+    } else {
+        FLAGS_SET(FLAG_Z);
+    }
+
+    FLAGS_CLEAR(FLAG_N | FLAG_C);
+    FLAGS_SET(FLAG_H);
+}
+
+static void or(byte_t data) {
+    registers.A |= data;
+
+    if (registers.A) {
+        FLAGS_CLEAR(FLAG_Z);
+    } else {
+        FLAGS_SET(FLAG_Z);
+    }
+
+    FLAGS_CLEAR(FLAG_N | FLAG_C | FLAG_H);
+}
+
+static void xor(byte_t data) {
+    registers.A ^= data;
+
+    if (registers.A) {
+        FLAGS_CLEAR(FLAG_Z);
+    } else {
+        FLAGS_SET(FLAG_Z);
+    }
+
+    FLAGS_CLEAR(FLAG_N | FLAG_C | FLAG_H);
+}
+
+static void cp(byte_t data) {
+    if (registers.A == data) {
+        FLAGS_SET(FLAG_Z);
+    } else {
+        FLAGS_CLEAR(FLAG_Z);
+    }
+
+    if (data > registers.A) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
+
+    if ((data & 0x0F) > (registers.A & 0x0F)) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
+
+    FLAGS_SET(FLAG_N);
 }
 
 const struct inst_t insts[256] = {
@@ -503,6 +649,21 @@ void load_rom(byte_t* mem, const char* path) {
     fclose(rom);
 }
 
+word_t pop_w() {
+    word_t data = load_w(registers.SP);
+    registers.SP += 2;
+
+    printf("stack read 0x%04x\n", data);
+    return data;
+}
+
+void push_w(word_t data) {
+    registers.SP -= 2;
+    store_w(data, registers.SP);
+
+    printf("stack write 0x%04x\n", data);
+}
+
 void cpu_reset() {
     registers.PC = 0x100;
     registers.SP = 0xFFFE;
@@ -567,989 +728,1207 @@ void cpu_step() {
             break;
         case 1:
             printf(insts[opcode].dsym, operands);
+            printf("\n");
             ((void (*)(byte_t)) insts[opcode].exec)((byte_t) operands);
             break;
         case 2:
             printf(insts[opcode].dsym, operands);
+            printf("\n");
             ((void (*)(word_t)) insts[opcode].exec)(operands);
             break;
     }
 }
 
 void cmd_undefined() {
+    --registers.PC;
 
-}
+    byte_t opcode = load_b(registers.PC);
 
-void cmd_nop() {
+    printf("undefined opcode 0x%02x\n", opcode);
 
+    exit(1);
 }
 
-void cmd_ld_bc_nn(byte_t operand) {
-
+void cmd_nop() { // 0x00
+    return;
 }
-
-void cmd_ld_bcp_a() {
 
+void cmd_ld_bc_nn(byte_t operand) { // 0x01
+    registers.BC = operand;
 }
 
-void cmd_inc_bc() {
-
+void cmd_ld_bcp_a() { // 0x02
+    store_b(registers.A, registers.BC);
 }
-
-void cmd_inc_b() {
 
+void cmd_inc_bc() { // 0x03
+    ++registers.BC;
 }
 
-void cmd_dec_b() {
-
+void cmd_inc_b() { // 0x04
+    registers.B = inc_b(registers.B);
 }
-
-void cmd_ld_b_n(byte_t operand) {
 
+void cmd_dec_b() { // 0x05
+    registers.B = dec_b(registers.B);
 }
 
-void cmd_rlca() {
-
+void cmd_ld_b_n(byte_t operand) { // 0x06
+    registers.B = operand;
 }
 
-void cmd_ld_nnp_sp(word_t operand) {
+void cmd_rlca() { // 0x07
+    byte_t carry = (registers.A & 0x80) >> 7;
 
-}
+    if (carry) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_add_hl_bc() {
+    registers.A <<= 1;
+    registers.A += carry;
 
+    FLAGS_CLEAR(FLAG_N | FLAG_Z | FLAG_H);
 }
-
-void cmd_ld_a_bcp() {
 
+void cmd_ld_nnp_sp(word_t operand) { // 0x08
+    store_w(operand, registers.SP);
 }
 
-void cmd_dec_bc() {
-
+void cmd_add_hl_bc() { // 0x09
+    add_w(&registers.HL, registers.BC);
 }
-
-void cmd_inc_c() {
 
+void cmd_ld_a_bcp() { // 0x0A
+    registers.A = load_b(registers.BC);
 }
 
-void cmd_dec_c() {
-
+void cmd_dec_bc() { // 0x0B
+    --registers.BC;
 }
-
-void cmd_ld_c_n(byte_t operand) {
 
+void cmd_inc_c() { // 0x0C
+    registers.C = inc_b(registers.C);
 }
 
-void cmd_rrca() {
-
+void cmd_dec_c() { // 0x0D
+    registers.C = dec_b(registers.C);
 }
 
-void cmd_stop(byte_t operand) {
-
+void cmd_ld_c_n(byte_t operand) { // 0x0E
+    registers.C = operand;
 }
-
-void cmd_ld_de_nn(word_t operand) {
 
-}
+void cmd_rrca() { // 0x0F
+    byte_t carry = registers.A & 0x01;
+    if (carry) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_ld_dep_a() {
+    registers.A >>= 1;
+    if (carry) {
+        registers.A |= 0x80;
+    }
 
+    FLAGS_CLEAR(FLAG_N | FLAG_Z | FLAG_H);
 }
-
-void cmd_inc_de() {
 
+void cmd_stop(byte_t operand) { // 0x10
+    state.stopped = 1;
 }
 
-void cmd_inc_d() {
-
+void cmd_ld_de_nn(word_t operand) { // 0x11
+    registers.DE = operand;
 }
-
-void cmd_dec_d() {
 
+void cmd_ld_dep_a() { // 0x12
+    store_b(registers.A, registers.DE);
 }
 
-void cmd_ld_d_n(byte_t operand) {
-
+void cmd_inc_de() { // 0x13
+    ++registers.DE;
 }
-
-void cmd_rla() {
 
+void cmd_inc_d() { // 0x14
+    registers.D = inc_b(registers.D);
 }
 
-void cmd_jr_n(byte_t operand) {
-
+void cmd_dec_d() { // 0x15
+    registers.D = dec_b(registers.D);
 }
-
-void cmd_add_hl_de() {
 
+void cmd_ld_d_n(byte_t operand) { // 0x16
+    registers.D = operand;
 }
 
-void cmd_ld_a_dep() {
+void cmd_rla() { // 0x17
+    int32_t carry = FLAGS_IS_SET(FLAG_C);
 
-}
+    if (registers.A & 0x80) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_dec_de() {
+    registers.A <<= 1;
+    registers.A += carry;
 
+    FLAGS_CLEAR(FLAG_N | FLAG_Z | FLAG_H);
 }
-
-void cmd_inc_e() {
 
+void cmd_jr_n(byte_t operand) { // 0x18
+    registers.PC += operand;
 }
 
-void cmd_dec_e() {
-
+void cmd_add_hl_de() { // 0x19
+    add_w(&registers.HL, registers.DE);
 }
-
-void cmd_ld_e_n(byte_t operand) {
 
+void cmd_ld_a_dep() { // 0x1A
+    registers.A = load_b(registers.DE);
 }
 
-void cmd_rra() {
-
+void cmd_dec_de() { // 0x1B
+    --registers.DE;
 }
 
-void cmd_jr_nz_n(byte_t operand) {
-
+void cmd_inc_e() { // 0x1C
+    registers.E = inc_b(registers.E);
 }
-
-void cmd_ld_hl_nn(word_t operand) {
 
+void cmd_dec_e() { // 0x1D
+    registers.E = dec_b(registers.E);
 }
 
-void cmd_ldi_hlp_a() {
-
+void cmd_ld_e_n(byte_t operand) { // 0x1E
+    registers.E = operand;
 }
 
-void cmd_inc_hl() {
+void cmd_rra() { // 0x1F
+    int32_t carry = FLAGS_IS_SET(FLAG_C);
+    carry <<= 7;
 
-}
+    if (registers.A & 0x01) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_inc_h() {
+    registers.A >>= 1;
+    registers.A += carry;
 
+    FLAGS_CLEAR(FLAG_N | FLAG_Z | FLAG_H);
 }
 
-void cmd_dec_h() {
-
+void cmd_jr_nz_n(byte_t operand) { // 0x20
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        state.ticks += 8;
+    } else {
+        registers.PC += operand;
+        state.ticks += 12;
+    }
 }
-
-void cmd_ld_h_n(byte_t operand) {
 
+void cmd_ld_hl_nn(word_t operand) { // 0x21
+    registers.HL = operand;
 }
 
-void cmd_daa() {
-
+void cmd_ldi_hlp_a() { // 0x22
+    store_b(registers.A, registers.HL++);
 }
-
-void cmd_jr_z_n(byte_t operand) {
 
+void cmd_inc_hl() { // 0x23
+    ++registers.HL;
 }
 
-void cmd_add_hl_hl() {
-
+void cmd_inc_h() { // 0x24
+    registers.H = inc_b(registers.H);
 }
-
-void cmd_ldi_a_hlp() {
 
+void cmd_dec_h() { // 0x25
+    registers.H = dec_b(registers.H);
 }
 
-void cmd_dec_hl() {
-
+void cmd_ld_h_n(byte_t operand) { // 0x26
+    registers.H = operand;
 }
-
-void cmd_inc_l() {
 
+void cmd_daa() { // 0x27
+    cmd_undefined();
 }
 
-void cmd_dec_l() {
-
+void cmd_jr_z_n(byte_t operand) { // 0x28
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        registers.PC += operand;
+        state.ticks += 12;
+    } else {
+        state.ticks += 8;
+    }
 }
-
-void cmd_ld_l_n(byte_t operand) {
 
+void cmd_add_hl_hl() { // 0x29
+    add_w(&registers.HL, registers.HL);
 }
 
-void cmd_cpl() {
-
+void cmd_ldi_a_hlp() { // 0x2A
+    registers.A = load_b(registers.HL++);
 }
 
-void cmd_jr_nc_n(byte_t operand) {
-
+void cmd_dec_hl() { // 0x2B
+    --registers.HL;
 }
-
-void cmd_ld_sp_nn(word_t operand) {
 
+void cmd_inc_l() { // 0x2C
+    registers.L = inc_b(registers.L);
 }
 
-void cmd_ldd_hlp_a() {
-
+void cmd_dec_l() { // 0x2D
+    registers.L = dec_b(registers.L);
 }
-
-void cmd_inc_sp() {
 
+void cmd_ld_l_n(byte_t operand) { // 0x2E
+    registers.L = operand;
 }
 
-void cmd_inc_hlp() {
-
+void cmd_cpl() { // 0x2F
+    registers.A = ~registers.A;
+    FLAGS_SET(FLAG_N | FLAG_H);
 }
-
-void cmd_dec_hlp() {
 
+void cmd_jr_nc_n(byte_t operand) { // 0x30
+    if (FLAGS_IS_SET(FLAG_C)) {
+        state.ticks += 8;
+    } else {
+        registers.PC += operand;
+        state.ticks += 12;
+    }
 }
 
-void cmd_ld_hlp_n(byte_t operand) {
-
+void cmd_ld_sp_nn(word_t operand) { // 0x31
+    registers.SP = operand;
 }
-
-void cmd_scf() {
 
+void cmd_ldd_hlp_a() { // 0x32
+    store_b(registers.A, registers.HL--);
 }
 
-void cmd_jr_c_n(byte_t operand) {
-
+void cmd_inc_sp() { // 0x33
+    ++registers.SP;
 }
-
-void cmd_add_hl_sp() {
 
+void cmd_inc_hlp() { // 0x34
+    store_b(inc_b(load_b(registers.HL)), registers.HL);
 }
 
-void cmd_ldd_a_hlp() {
-
+void cmd_dec_hlp() { // 0x35
+    store_b(dec_b(load_b(registers.HL)), registers.HL);
 }
-
-void cmd_dec_sp() {
 
+void cmd_ld_hlp_n(byte_t operand) { // 0x36
+    store_b(operand, registers.HL);
 }
 
-void cmd_inc_a() {
-
+void cmd_scf() { // 0x37
+    FLAGS_SET(FLAG_C);
+    FLAGS_CLEAR(FLAG_N | FLAG_C);
 }
-
-void cmd_dec_a() {
 
+void cmd_jr_c_n(byte_t operand) { // 0x38
+    if (FLAGS_IS_SET(FLAG_C)) {
+        registers.PC += operand;
+        state.ticks += 12;
+    } else {
+        state.ticks += 8;
+    }
 }
 
-void cmd_ld_a_n(byte_t operand) {
-
+void cmd_add_hl_sp() { // 0x39
+    add_w(&registers.HL, registers.SP);
 }
 
-void cmd_ccf() {
-
+void cmd_ldd_a_hlp() { // 0x3A
+    registers.A = load_b(registers.HL--);
 }
-
-void cmd_ld_b_b() {
 
+void cmd_dec_sp() { // 0x3B
+    --registers.SP;
 }
 
-void cmd_ld_b_c() {
-
+void cmd_inc_a() { // 0x3C
+    registers.A = inc_b(registers.A);
 }
-
-void cmd_ld_b_d() {
 
+void cmd_dec_a() { // 0x3D
+    registers.A = dec_b(registers.A);
 }
 
-void cmd_ld_b_e() {
-
+void cmd_ld_a_n(byte_t operand) { // 0x3E
+    registers.A = operand;
 }
 
-void cmd_ld_b_h() {
+void cmd_ccf() { // 0x3F
+    if (FLAGS_IS_SET(FLAG_C)) {
+        FLAGS_CLEAR(FLAG_C);
+    } else {
+        FLAGS_SET(FLAG_C);
+    }
 
+    FLAGS_CLEAR(FLAG_N | FLAG_H);
 }
-
-void cmd_ld_b_l() {
 
+void cmd_ld_b_b() { // 0x40
+    return; // Nothing to do.
 }
 
-void cmd_ld_b_hlp() {
-
+void cmd_ld_b_c() { // 0x41
+    registers.B = registers.C;
 }
-
-void cmd_ld_b_a() {
 
+void cmd_ld_b_d() { // 0x42
+    registers.B = registers.D;
 }
 
-void cmd_ld_c_b() {
-
+void cmd_ld_b_e() { // 0x43
+    registers.B = registers.E;
 }
-
-void cmd_ld_c_c() {
 
+void cmd_ld_b_h() { // 0x44
+    registers.B = registers.H;
 }
 
-void cmd_ld_c_d() {
-
+void cmd_ld_b_l() { // 0x45
+    registers.B = registers.L;
 }
-
-void cmd_ld_c_e() {
 
+void cmd_ld_b_hlp() { // 0x46
+    registers.B = load_b(registers.HL);
 }
 
-void cmd_ld_c_h() {
-
+void cmd_ld_b_a() { // 0x47
+    registers.B = registers.A;
 }
-
-void cmd_ld_c_l() {
 
+void cmd_ld_c_b() { // 0x48
+    registers.C = registers.B;
 }
 
-void cmd_ld_c_hlp() {
-
+void cmd_ld_c_c() { // 0x49
+    return; // Nothing to do.
 }
 
-void cmd_ld_c_a() {
-
+void cmd_ld_c_d() { // 0x4A
+    registers.C = registers.D;
 }
-
-void cmd_ld_d_b() {
 
+void cmd_ld_c_e() { // 0x4B
+    registers.C = registers.E;
 }
 
-void cmd_ld_d_c() {
-
+void cmd_ld_c_h() { // 0x4C
+    registers.C = registers.H;
 }
-
-void cmd_ld_d_d() {
 
+void cmd_ld_c_l() { // 0x4D
+    registers.C = registers.L;
 }
 
-void cmd_ld_d_e() {
-
+void cmd_ld_c_hlp() { // 0x4E
+    registers.C = load_b(registers.HL);
 }
-
-void cmd_ld_d_h() {
 
+void cmd_ld_c_a() { // 0x4F
+    registers.C = registers.A;
 }
 
-void cmd_ld_d_l() {
-
+void cmd_ld_d_b() { // 0x50
+    registers.D = registers.B;
 }
-
-void cmd_ld_d_hlp() {
 
+void cmd_ld_d_c() { // 0x51
+    registers.D = registers.C;
 }
 
-void cmd_ld_d_a() {
-
+void cmd_ld_d_d() { // 0x52
+    return; // Nothing to do.
 }
-
-void cmd_ld_e_b() {
 
+void cmd_ld_d_e() { // 0x53
+    registers.D = registers.E;
 }
 
-void cmd_ld_e_c() {
-
+void cmd_ld_d_h() { // 0x54
+    registers.D = registers.H;
 }
-
-void cmd_ld_e_d() {
 
+void cmd_ld_d_l() { // 0x55
+    registers.D = registers.L;
 }
 
-void cmd_ld_e_e() {
-
+void cmd_ld_d_hlp() { // 0x56
+    registers.D = load_b(registers.HL);
 }
-
-void cmd_ld_e_h() {
 
+void cmd_ld_d_a() { // 0x57
+    registers.D = registers.A;
 }
 
-void cmd_ld_e_l() {
-
+void cmd_ld_e_b() { // 0x58
+    registers.E = registers.B;
 }
 
-void cmd_ld_e_hlp() {
-
+void cmd_ld_e_c() { // 0x59
+    registers.E = registers.C;
 }
-
-void cmd_ld_e_a() {
 
+void cmd_ld_e_d() { // 0x5A
+    registers.E = registers.D;
 }
 
-void cmd_ld_h_b() {
-
+void cmd_ld_e_e() { // 0x5B
+    return; // Nothing to do.
 }
-
-void cmd_ld_h_c() {
 
+void cmd_ld_e_h() { // 0x5C
+    registers.E = registers.H;
 }
 
-void cmd_ld_h_d() {
-
+void cmd_ld_e_l() { // 0x5D
+    registers.E = registers.L;
 }
-
-void cmd_ld_h_e() {
 
+void cmd_ld_e_hlp() { // 0x5E
+    registers.E = load_b(registers.HL);
 }
 
-void cmd_ld_h_h() {
-
+void cmd_ld_e_a() { // 0x5F
+    registers.E = registers.A;
 }
-
-void cmd_ld_h_l() {
 
+void cmd_ld_h_b() { // 0x60
+    registers.H = registers.B;
 }
 
-void cmd_ld_h_hlp() {
-
+void cmd_ld_h_c() { // 0x61
+    registers.H = registers.C;
 }
-
-void cmd_ld_h_a() {
 
+void cmd_ld_h_d() { // 0x62
+    registers.H = registers.D;
 }
 
-void cmd_ld_l_b() {
-
+void cmd_ld_h_e() { // 0x63
+    registers.H = registers.E;
 }
-
-void cmd_ld_l_c() {
 
+void cmd_ld_h_h() { // 0x64
+    return; // Nothing to do.
 }
 
-void cmd_ld_l_d() {
-
+void cmd_ld_h_l() { // 0x65
+    registers.H = registers.L;
 }
-
-void cmd_ld_l_e() {
 
+void cmd_ld_h_hlp() { // 0x66
+    registers.H = load_b(registers.HL);
 }
 
-void cmd_ld_l_h() {
-
+void cmd_ld_h_a() { // 0x67
+    registers.H = registers.A;
 }
 
-void cmd_ld_l_l() {
-
+void cmd_ld_l_b() { // 0x68
+    registers.L = registers.B;
 }
-
-void cmd_ld_l_hlp() {
 
+void cmd_ld_l_c() { // 0x69
+    registers.L = registers.C;
 }
 
-void cmd_ld_l_a() {
-
+void cmd_ld_l_d() { // 0x6A
+    registers.L = registers.D;
 }
-
-void cmd_ld_hlp_b() {
 
+void cmd_ld_l_e() { // 0x6B
+    registers.L = registers.E;
 }
 
-void cmd_ld_hlp_c() {
-
+void cmd_ld_l_h() { // 0x6C
+    registers.L = registers.H;
 }
-
-void cmd_ld_hlp_d() {
 
+void cmd_ld_l_l() { // 0x6D
+    return; // Nothing to do.
 }
 
-void cmd_ld_hlp_e() {
-
+void cmd_ld_l_hlp() { // 0x6E
+    registers.L = load_b(registers.HL);
 }
-
-void cmd_ld_hlp_h() {
 
+void cmd_ld_l_a() { // 0x6F
+    registers.L = registers.A;
 }
 
-void cmd_ld_hlp_l() {
-
+void cmd_ld_hlp_b() { // 0x70
+    store_b(registers.B, registers.HL);
 }
-
-void cmd_halt() {
 
+void cmd_ld_hlp_c() { // 0x71
+    store_b(registers.C, registers.HL);
 }
 
-void cmd_ld_hlp_a() {
-
+void cmd_ld_hlp_d() { // 0x72
+    store_b(registers.D, registers.HL);
 }
-
-void cmd_ld_a_b() {
 
+void cmd_ld_hlp_e() { // 0x73
+    store_b(registers.E, registers.HL);
 }
 
-void cmd_ld_a_c() {
-
+void cmd_ld_hlp_h() { // 0x74
+    store_b(registers.H, registers.HL);
 }
-
-void cmd_ld_a_d() {
 
+void cmd_ld_hlp_l() { // 0x75
+    store_b(registers.L, registers.HL);
 }
 
-void cmd_ld_a_e() {
-
+void cmd_halt() { // 0x76
+    cmd_undefined();
+    // if master interrupt, halt execution until an interrupt occurs.
+    ++registers.PC;
 }
 
-void cmd_ld_a_h() {
-
+void cmd_ld_hlp_a() { // 0x77
+    store_b(registers.A, registers.HL);
 }
-
-void cmd_ld_a_l() {
 
+void cmd_ld_a_b() { // 0x78
+    registers.A = registers.B;
 }
 
-void cmd_ld_a_hlp() {
-
+void cmd_ld_a_c() { // 0x79
+    registers.A = registers.C;
 }
-
-void cmd_ld_a_a() {
 
+void cmd_ld_a_d() { // 0x7A
+    registers.A = registers.D;
 }
 
-void cmd_add_a_b() {
-
+void cmd_ld_a_e() { // 0x7B
+    registers.A = registers.E;
 }
-
-void cmd_add_a_c() {
 
+void cmd_ld_a_h() { // 0x7C
+    registers.A = registers.H;
 }
 
-void cmd_add_a_d() {
-
+void cmd_ld_a_l() { // 0x7D
+    registers.A = registers.L;
 }
 
-void cmd_add_a_e() {
-
+void cmd_ld_a_hlp() { // 0x7E
+    registers.A = load_b(registers.HL);
 }
-
-void cmd_add_a_h() {
 
+void cmd_ld_a_a() { // 0x7F
+    return; // Nothing to do.
 }
 
-void cmd_add_a_l() {
-
+void cmd_add_a_b() { // 0x80
+    add_b(&registers.A, registers.B);
 }
-
-void cmd_add_a_hlp() {
 
+void cmd_add_a_c() { // 0x81
+    add_b(&registers.A, registers.C);
 }
 
-void cmd_add_a_a() {
-
+void cmd_add_a_d() { // 0x82
+    add_b(&registers.A, registers.D);
 }
-
-void cmd_adc_b() {
 
+void cmd_add_a_e() { // 0x83
+    add_b(&registers.A, registers.E);
 }
 
-void cmd_adc_c() {
-
+void cmd_add_a_h() { // 0x84
+    add_b(&registers.A, registers.H);
 }
 
-void cmd_adc_d() {
-
+void cmd_add_a_l() { // 0x85
+    add_b(&registers.A, registers.L);
 }
-
-void cmd_adc_e() {
 
+void cmd_add_a_hlp() { // 0x86
+    registers.A = load_b(registers.HL);
 }
 
-void cmd_adc_h() {
-
+void cmd_add_a_a() { // 0x87
+    return; // Nothing to do.
 }
-
-void cmd_adc_l() {
 
+void cmd_adc_b() { // 0x88
+    adc(registers.B);
 }
 
-void cmd_adc_hlp() {
-
+void cmd_adc_c() { // 0x89
+    adc(registers.C);
 }
-
-void cmd_adc_a() {
 
+void cmd_adc_d() { // 0x8A
+    adc(registers.D);
 }
 
-void cmd_sub_b() {
-
+void cmd_adc_e() { // 0x8B
+    adc(registers.E);
 }
-
-void cmd_sub_c() {
 
+void cmd_adc_h() { // 0x8C
+    adc(registers.H);
 }
 
-void cmd_sub_d() {
-
+void cmd_adc_l() { // 0x8D
+    adc(registers.L);
 }
-
-void cmd_sub_e() {
 
+void cmd_adc_hlp() { // 0x8E
+    adc(load_b(registers.HL));
 }
 
-void cmd_sub_h() {
-
+void cmd_adc_a() { // 0x8F
+    adc(registers.A);
 }
-
-void cmd_sub_l() {
 
+void cmd_sub_b() { // 0x90
+    sub(registers.B);
 }
 
-void cmd_sub_hlp() {
-
+void cmd_sub_c() { // 0x91
+    sub(registers.C);
 }
-
-void cmd_sub_a() {
 
+void cmd_sub_d() { // 0x92
+    sub(registers.D);
 }
 
-void cmd_sbc_b() {
-
+void cmd_sub_e() { // 0x93
+    sub(registers.E);
 }
 
-void cmd_sbc_c() {
-
+void cmd_sub_h() { // 0x94
+    sub(registers.H);
 }
-
-void cmd_sbc_d() {
 
+void cmd_sub_l() { // 0x95
+    sub(registers.L);
 }
 
-void cmd_sbc_e() {
-
+void cmd_sub_hlp() { // 0x96
+    sub(load_b(registers.HL));
 }
-
-void cmd_sbc_h() {
 
+void cmd_sub_a() { // 0x97
+    sub(registers.A);
 }
 
-void cmd_sbc_l() {
-
+void cmd_sbc_b() { // 0x98
+    sbc(registers.B);
 }
-
-void cmd_sbc_hlp() {
 
+void cmd_sbc_c() { // 0x99
+    sbc(registers.C);
 }
 
-void cmd_sbc_a() {
-
+void cmd_sbc_d() { // 0x9A
+    sbc(registers.D);
 }
-
-void cmd_and_b() {
 
+void cmd_sbc_e() { // 0x9B
+    sbc(registers.E);
 }
 
-void cmd_and_c() {
-
+void cmd_sbc_h() { // 0x9C
+    sbc(registers.H);
 }
-
-void cmd_and_d() {
 
+void cmd_sbc_l() { // 0x9D
+    sbc(registers.L);
 }
 
-void cmd_and_e() {
-
+void cmd_sbc_hlp() { // 0x9E
+    sbc(load_b(registers.HL));
 }
-
-void cmd_and_h() {
 
+void cmd_sbc_a() { // 0x9F
+    sbc(registers.A);
 }
 
-void cmd_and_l() {
-
+void cmd_and_b() { // 0xA0
+    and(registers.B);
 }
-
-void cmd_and_hlp() {
 
+void cmd_and_c() { // 0xA1
+    and(registers.C);
 }
 
-void cmd_and_a() {
-
+void cmd_and_d() { // 0xA2
+    and(registers.D);
 }
 
-void cmd_xor_b() {
-
+void cmd_and_e() { // 0xA3
+    and(registers.E);
 }
-
-void cmd_xor_c() {
 
+void cmd_and_h() { // 0xA4
+    and(registers.H);
 }
 
-void cmd_xor_d() {
-
+void cmd_and_l() { // 0xA5
+    and(registers.L);
 }
-
-void cmd_xor_e() {
 
+void cmd_and_hlp() { // 0xA6
+    and(load_b(registers.HL));
 }
 
-void cmd_xor_h() {
-
+void cmd_and_a() { // 0xA7
+    and(registers.A);
 }
-
-void cmd_xor_l() {
 
+void cmd_xor_b() { // 0xA8
+    xor(registers.B);
 }
 
-void cmd_xor_hlp() {
-
+void cmd_xor_c() { // 0xA9
+    xor(registers.C);
 }
-
-void cmd_xor_a() {
 
+void cmd_xor_d() { // 0xAA
+    xor(registers.D);
 }
 
-void cmd_or_b() {
-
+void cmd_xor_e() { // 0xAB
+    xor(registers.E);
 }
-
-void cmd_or_c() {
 
+void cmd_xor_h() { // 0xAC
+    xor(registers.H);
 }
 
-void cmd_or_d() {
-
+void cmd_xor_l() { // 0xAD
+    xor(registers.L);
 }
-
-void cmd_or_e() {
 
+void cmd_xor_hlp() { // 0xAE
+    xor(load_b(registers.HL));
 }
 
-void cmd_or_h() {
-
+void cmd_xor_a() { // 0xAF
+    xor(registers.A);
 }
-
-void cmd_or_l() {
 
+void cmd_or_b() { // 0xB0
+    or(registers.B);
 }
 
-void cmd_or_hlp() {
-
+void cmd_or_c() { // 0xB1
+    or(registers.C);
 }
 
-void cmd_or_a() {
-
+void cmd_or_d() { // 0xB2
+    or(registers.D);
 }
-
-void cmd_cp_b() {
 
+void cmd_or_e() { // 0xB3
+    or(registers.E);
 }
 
-void cmd_cp_c() {
-
+void cmd_or_h() { // 0xB4
+    or(registers.H);
 }
-
-void cmd_cp_d() {
 
+void cmd_or_l() { // 0xB5
+    or(registers.L);
 }
 
-void cmd_cp_e() {
-
+void cmd_or_hlp() { // 0xB6
+    or(load_b(registers.HL));
 }
-
-void cmd_cp_h() {
 
+void cmd_or_a() { // 0xB7
+    or(registers.A);
 }
 
-void cmd_cp_l() {
-
+void cmd_cp_b() { // 0xB8
+    cp(registers.B);
 }
-
-void cmd_cp_hlp() {
 
+void cmd_cp_c() { // 0xB9
+    cp(registers.C);
 }
 
-void cmd_cp_a() {
-
+void cmd_cp_d() { // 0xBA
+    cp(registers.D);
 }
-
-void cmd_ret_nz() {
 
+void cmd_cp_e() { // 0xBB
+    cp(registers.E);
 }
 
-void cmd_pop_bc() {
-
+void cmd_cp_h() { // 0xBC
+    cp(registers.H);
 }
-
-void cmd_jp_nz_nn(word_t operand) {
 
+void cmd_cp_l() { // 0xBD
+    cp(registers.L);
 }
 
-void cmd_jp_nn(word_t operand) {
-
+void cmd_cp_hlp() { // 0xBE
+    cp(load_b(registers.HL));
 }
-
-void cmd_call_nz_nn(word_t operand) {
 
+void cmd_cp_a() { // 0xBF
+    cp(registers.A);
 }
 
-void cmd_push_bc() {
-
+void cmd_ret_nz() { // 0xC0
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        state.ticks += 8;
+    } else {
+        registers.PC = pop_w();
+        state.ticks += 20;
+    }
 }
 
-void cmd_add_a_n(byte_t operand) {
-
+void cmd_pop_bc() { // 0xC1
+    registers.BC = pop_w();
 }
-
-void cmd_rst_0() {
 
+void cmd_jp_nz_nn(word_t operand) { // 0xC2
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        state.ticks += 12;
+    } else {
+        registers.PC = operand;
+        state.ticks += 16;
+    }
 }
 
-void cmd_ret_z() {
-
+void cmd_jp_nn(word_t operand) { // 0xC3
+    registers.PC = operand;
 }
-
-void cmd_ret() {
 
+void cmd_call_nz_nn(word_t operand) { // 0xC4
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        state.ticks += 12;
+    } else {
+        push_w(registers.PC);
+        registers.PC = operand;
+        state.ticks += 24;
+    }
 }
 
-void cmd_jp_z_nn(word_t operand) {
-
+void cmd_push_bc() { // 0xC5
+    push_w(registers.BC);
 }
-
-void cmd_call_z_nn(word_t operand) {
 
+void cmd_add_a_n(byte_t operand) { // 0xC6
+    add_b(&registers.A, operand);
 }
 
-void cmd_call_nn(word_t operand) {
-
+void cmd_rst_0() { // 0xC7
+    push_w(registers.PC);
+    registers.PC = 0x0000;
 }
-
-void cmd_adc_n(byte_t operand) {
 
+void cmd_ret_z() { // 0xC8
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        registers.PC = pop_w();
+        state.ticks += 20;
+    } else {
+        state.ticks += 8;
+    }
 }
 
-void cmd_rst_08() {
-
+void cmd_ret() { // 0xC9
+    registers.PC = pop_w();
 }
-
-void cmd_ret_nc() {
 
+void cmd_jp_z_nn(word_t operand) { // 0xCA
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        registers.PC = operand;
+        state.ticks += 16;
+    } else {
+        state.ticks += 12;
+    }
 }
 
-void cmd_pop_de() {
-
+void cmd_call_z_nn(word_t operand) { // 0xCC
+    if (FLAGS_IS_SET(FLAG_Z)) {
+        push_w(registers.PC);
+        registers.PC = operand;
+        state.ticks += 24;
+    } else {
+        state.ticks += 12;
+    }
 }
-
-void cmd_jp_nc_nn(word_t operand) {
 
+void cmd_call_nn(word_t operand) { // 0xCD
+    push_w(registers.PC);
+    registers.PC = operand;
 }
 
-void cmd_call_nc_nn(word_t operand) {
-
+void cmd_adc_n(byte_t operand) { // 0xCE
+    adc(operand);
 }
-
-void cmd_push_de() {
 
+void cmd_rst_08() { // 0xCF
+    push_w(registers.PC);
+    registers.PC = 0x0008;
 }
 
-void cmd_sub_n(byte_t operand) {
-
+void cmd_ret_nc() { // 0xD0
+    if (FLAGS_IS_SET(FLAG_C)) {
+        state.ticks += 8;
+    } else {
+        registers.PC = pop_w();
+        state.ticks += 20;
+    }
 }
 
-void cmd_rst_10() {
-
+void cmd_pop_de() { // 0xD1
+    registers.DE = pop_w();
 }
-
-void cmd_ret_c() {
 
+void cmd_jp_nc_nn(word_t operand) { // 0xD2
+    if (FLAGS_IS_SET(FLAG_C)) {
+        state.ticks += 12;
+    } else {
+        registers.PC = operand;
+        state.ticks += 16;
+    }
 }
 
-void cmd_jp_c_nn(word_t operand) {
-
+void cmd_call_nc_nn(word_t operand) { // 0xD4
+    if (FLAGS_IS_SET(FLAG_C)) {
+        push_w(registers.PC);
+        registers.PC = operand;
+        state.ticks += 24;
+    } else {
+        state.ticks += 12;
+    }
 }
-
-void cmd_call_c_nn(word_t operand) {
 
+void cmd_push_de() { // 0xD5
+    push_w(registers.DE);
 }
 
-void cmd_sbc_n(byte_t operand) {
-
+void cmd_sub_n(byte_t operand) { // 0xD6
+    sub(operand);
 }
-
-void cmd_rst_18() {
 
+void cmd_rst_10() { // 0xD7
+    push_w(registers.PC);
+    registers.PC = 0x0010;
 }
 
-void cmd_ld_ff_n_ap(byte_t operand) {
-
+void cmd_ret_c() { // 0xD8
+    if (FLAGS_IS_SET(FLAG_C)) {
+        registers.PC = pop_w();
+        state.ticks += 20;
+    } else {
+        state.ticks += 8;
+    }
 }
-
-void cmd_pop_hl() {
 
+void cmd_jp_c_nn(word_t operand) { // 0xDA
+    if (FLAGS_IS_SET(FLAG_C)) {
+        registers.PC = operand;
+        state.ticks += 16;
+    } else {
+        state.ticks += 12;
+    }
 }
 
-void cmd_ld_ff_c_a() {
-
+void cmd_call_c_nn(word_t operand) { // 0xDC
+    if (FLAGS_IS_SET(FLAG_C)) {
+        push_w(registers.PC);
+        registers.PC = operand;
+        state.ticks += 24;
+    } else {
+        state.ticks += 12;
+    }
 }
-
-void cmd_push_hl() {
 
+void cmd_sbc_n(byte_t operand) { // 0xDE
+    sbc(operand);
 }
 
-void cmd_and_n(byte_t operand) {
-
+void cmd_rst_18() { // 0xDF
+    push_w(registers.PC);
+    registers.PC = 0x0018;
 }
 
-void cmd_rst_20() {
+void cmd_ld_ff_n_ap(byte_t operand) { // 0xE0
+    store_b(registers.A, 0xFF00 + operand);
+}
 
+void cmd_pop_hl() { // 0xE1
+    registers.HL = pop_w();
 }
 
-void cmd_add_sp_n(byte_t operand) {
+void cmd_ld_ff_c_a() { // 0xE2
+    store_b(registers.A, 0xFF00 + registers.C);
+}
 
+void cmd_push_hl() { // 0xE5
+    push_w(registers.HL);
 }
 
-void cmd_jp_hl() {
+void cmd_and_n(byte_t operand) { // 0xE6
+    registers.A &= operand;
 
-}
+    FLAGS_CLEAR(FLAG_C | FLAG_N);
+    FLAGS_SET(FLAG_H);
 
-void cmd_ld_nnp_a(word_t operand) {
+    if (registers.A) {
+        FLAGS_CLEAR(FLAG_Z);
+    } else {
+        FLAGS_SET(FLAG_Z);
+    }
+}
 
+void cmd_rst_20() { // 0xE7
+    push_w(registers.PC);
+    registers.PC = 0x0020;
 }
 
-void cmd_xor_n(byte_t operand) {
+void cmd_add_sp_n(byte_t operand) { // 0xE8
+    int32_t res = registers.SP + operand;
 
-}
+    if (res & 0xFFFF0000) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_rst_28() {
+    registers.SP = res & 0xFFFF;
 
-}
+    if (((registers.SP & 0x0F) + (operand & 0x0F)) > 0x0F) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
 
-void cmd_ld_ff_ap_n(byte_t operand) {
+    FLAGS_CLEAR(FLAG_Z | FLAG_N); // Check.
+}
 
+void cmd_jp_hl() { // 0xE9
+    registers.PC = registers.HL;
 }
 
-void cmd_pop_af() {
+void cmd_ld_nnp_a(word_t operand) { // 0xEA
+    store_b(registers.A, operand);
+}
 
+void cmd_xor_n(byte_t operand) { // 0xEE
+    xor(operand);
 }
 
-void cmd_ld_a_ff_c() {
+void cmd_rst_28() { // 0xEF
+    push_w(registers.PC);
+    registers.PC = 0x0028;
+}
 
+void cmd_ld_ff_ap_n(byte_t operand) { // 0xF0
+    registers.A = load_b(0xFF00 + operand);
 }
 
-void cmd_di_inst() {
+void cmd_pop_af() { // 0xF1
+    registers.AF = pop_w();
+}
 
+void cmd_ld_a_ff_c() { // 0xF2
+    registers.A = load_b(0xFF00 + registers.C);
 }
 
-void cmd_push_af() {
+void cmd_di_inst() { // 0xF3
+    // Master interrupt = 0
+    cmd_undefined();
+}
 
+void cmd_push_af() { // 0xF5
+    push_w(registers.AF);
 }
 
-void cmd_or_n(byte_t operand) {
+void cmd_or_n(byte_t operand) { // 0xF6
+    or(operand);
+}
 
+void cmd_rst_30() { // 0xF7
+    push_w(registers.PC);
+    registers.PC = 0x0030;
 }
 
-void cmd_rst_30() {
+void cmd_ld_hl_sp_n(byte_t operand) { // 0xF8
+    int32_t res = registers.SP + operand;
 
-}
+    if (res & 0xFFFF0000) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
-void cmd_ld_hl_sp_n(byte_t operand) {
+    if (((registers.SP & 0x0F) + (operand & 0x0F)) > 0x0F) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
 
-}
+    FLAGS_CLEAR(FLAG_Z | FLAG_N);
 
-void cmd_ld_sp_hl() {
+    registers.HL = (word_t)(res & 0xFFFF);
+}
 
+void cmd_ld_sp_hl() { // 0xF9
+    registers.SP = registers.HL;
 }
 
-void cmd_ld_a_nnp(word_t operand) {
+void cmd_ld_a_nnp(word_t operand) { // 0xFA
+    registers.A = load_b(operand);
+}
 
+void cmd_ei() { // 0xFB
+    // mMaster interrupt = 1
+    cmd_undefined();
 }
 
-void cmd_ei() {
+void cmd_cp_n(byte_t operand) { // 0xFE
+    FLAGS_SET(FLAG_N);
 
-}
+    if (registers.A == operand) {
+        FLAGS_SET(FLAG_Z);
+    } else {
+        FLAGS_CLEAR(FLAG_Z);
+    }
 
-void cmd_cp_n(byte_t operand) {
+    if (operand > registers.A) {
+        FLAGS_SET(FLAG_C);
+    } else {
+        FLAGS_CLEAR(FLAG_C);
+    }
 
+    if ((operand & 0x0F) > (registers.A & 0x0F)) {
+        FLAGS_SET(FLAG_H);
+    } else {
+        FLAGS_CLEAR(FLAG_H);
+    }
 }
-
-void cmd_rst_38() {
 
+void cmd_rst_38() { // 0xFF
+    push_w(registers.PC);
+    registers.PC = 0x0038;
 }
 
 int32_t main() {
