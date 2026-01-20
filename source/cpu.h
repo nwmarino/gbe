@@ -1,265 +1,101 @@
-//
-//  GBE, Nick Marino
-//
-//  MIT LICENSE
-//
-
-#ifndef GBE_CPU_H_
-#define GBE_CPU_H_
+#ifndef CPU_H_
+#define CPU_H_
 
 #include "common.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif // __cplusplus
+#include <stdint.h>
 
-void cmd_undefined();
-void cmd_nop();
-void cmd_ld_bc_nn(byte_t operand);
-void cmd_ld_bcp_a();
-void cmd_inc_bc();
-void cmd_inc_b();
-void cmd_dec_b();
-void cmd_ld_b_n(byte_t operand);
-void cmd_rlca();
-void cmd_ld_nnp_sp(word_t operand);
-void cmd_add_hl_bc();
-void cmd_ld_a_bcp();
-void cmd_dec_bc();
-void cmd_inc_c();
-void cmd_dec_c();
-void cmd_ld_c_n(byte_t operand);
-void cmd_rrca();
-void cmd_stop(byte_t operand);
-void cmd_ld_de_nn(word_t operand);
-void cmd_ld_dep_a();
-void cmd_inc_de();
-void cmd_inc_d();
-void cmd_dec_d();
-void cmd_ld_d_n(byte_t operand);
-void cmd_rla();
-void cmd_jr_n(byte_t operand);
-void cmd_add_hl_de();
-void cmd_ld_a_dep();
-void cmd_dec_de();
-void cmd_inc_e();
-void cmd_dec_e();
-void cmd_ld_e_n(byte_t operand);
-void cmd_rra();
-void cmd_jr_nz_n(byte_t operand);
-void cmd_ld_hl_nn(word_t operand);
-void cmd_ldi_hlp_a();
-void cmd_inc_hl();
-void cmd_inc_h();
-void cmd_dec_h();
-void cmd_ld_h_n(byte_t operand);
-void cmd_daa();
-void cmd_jr_z_n(byte_t operand);
-void cmd_add_hl_hl();
-void cmd_ldi_a_hlp();
-void cmd_dec_hl();
-void cmd_inc_l();
-void cmd_dec_l();
-void cmd_ld_l_n(byte_t operand);
-void cmd_cpl();
-void cmd_jr_nc_n(byte_t operand);
-void cmd_ld_sp_nn(word_t operand);
-void cmd_ldd_hlp_a();
-void cmd_inc_sp();
-void cmd_inc_hlp();
-void cmd_dec_hlp();
-void cmd_ld_hlp_n(byte_t operand);
-void cmd_scf();
-void cmd_jr_c_n(byte_t operand);
-void cmd_add_hl_sp();
-void cmd_ldd_a_hlp();
-void cmd_dec_sp();
-void cmd_inc_a();
-void cmd_dec_a();
-void cmd_ld_a_n(byte_t operand);
-void cmd_ccf();
-void cmd_ld_b_b();
-void cmd_ld_b_c();
-void cmd_ld_b_d();
-void cmd_ld_b_e();
-void cmd_ld_b_h();
-void cmd_ld_b_l();
-void cmd_ld_b_hlp();
-void cmd_ld_b_a();
-void cmd_ld_c_b();
-void cmd_ld_c_c();
-void cmd_ld_c_d();
-void cmd_ld_c_e();
-void cmd_ld_c_h();
-void cmd_ld_c_l();
-void cmd_ld_c_hlp();
-void cmd_ld_c_a();
-void cmd_ld_d_b();
-void cmd_ld_d_c();
-void cmd_ld_d_d();
-void cmd_ld_d_e();
-void cmd_ld_d_h();
-void cmd_ld_d_l();
-void cmd_ld_d_hlp();
-void cmd_ld_d_a();
-void cmd_ld_e_b();
-void cmd_ld_e_c();
-void cmd_ld_e_d();
-void cmd_ld_e_e();
-void cmd_ld_e_h();
-void cmd_ld_e_l();
-void cmd_ld_e_hlp();
-void cmd_ld_e_a();
-void cmd_ld_h_b();
-void cmd_ld_h_c();
-void cmd_ld_h_d();
-void cmd_ld_h_e();
-void cmd_ld_h_h();
-void cmd_ld_h_l();
-void cmd_ld_h_hlp();
-void cmd_ld_h_a();
-void cmd_ld_l_b();
-void cmd_ld_l_c();
-void cmd_ld_l_d();
-void cmd_ld_l_e();
-void cmd_ld_l_h();
-void cmd_ld_l_l();
-void cmd_ld_l_hlp();
-void cmd_ld_l_a();
-void cmd_ld_hlp_b();
-void cmd_ld_hlp_c();
-void cmd_ld_hlp_d();
-void cmd_ld_hlp_e();
-void cmd_ld_hlp_h();
-void cmd_ld_hlp_l();
-void cmd_halt();
-void cmd_ld_hlp_a();
-void cmd_ld_a_b();
-void cmd_ld_a_c();
-void cmd_ld_a_d();
-void cmd_ld_a_e();
-void cmd_ld_a_h();
-void cmd_ld_a_l();
-void cmd_ld_a_hlp();
-void cmd_ld_a_a();
-void cmd_add_a_b();
-void cmd_add_a_c();
-void cmd_add_a_d();
-void cmd_add_a_e();
-void cmd_add_a_h();
-void cmd_add_a_l();
-void cmd_add_a_hlp();
-void cmd_add_a_a();
-void cmd_adc_b();
-void cmd_adc_c();
-void cmd_adc_d();
-void cmd_adc_e();
-void cmd_adc_h();
-void cmd_adc_l();
-void cmd_adc_hlp();
-void cmd_adc_a();
-void cmd_sub_b();
-void cmd_sub_c();
-void cmd_sub_d();
-void cmd_sub_e();
-void cmd_sub_h();
-void cmd_sub_l();
-void cmd_sub_hlp();
-void cmd_sub_a();
-void cmd_sbc_b();
-void cmd_sbc_c();
-void cmd_sbc_d();
-void cmd_sbc_e();
-void cmd_sbc_h();
-void cmd_sbc_l();
-void cmd_sbc_hlp();
-void cmd_sbc_a();
-void cmd_and_b();
-void cmd_and_c();
-void cmd_and_d();
-void cmd_and_e();
-void cmd_and_h();
-void cmd_and_l();
-void cmd_and_hlp();
-void cmd_and_a();
-void cmd_xor_b();
-void cmd_xor_c();
-void cmd_xor_d();
-void cmd_xor_e();
-void cmd_xor_h();
-void cmd_xor_l();
-void cmd_xor_hlp();
-void cmd_xor_a();
-void cmd_or_b();
-void cmd_or_c();
-void cmd_or_d();
-void cmd_or_e();
-void cmd_or_h();
-void cmd_or_l();
-void cmd_or_hlp();
-void cmd_or_a();
-void cmd_cp_b();
-void cmd_cp_c();
-void cmd_cp_d();
-void cmd_cp_e();
-void cmd_cp_h();
-void cmd_cp_l();
-void cmd_cp_hlp();
-void cmd_cp_a();
-void cmd_ret_nz();
-void cmd_pop_bc();
-void cmd_jp_nz_nn(word_t operand);
-void cmd_jp_nn(word_t operand);
-void cmd_call_nz_nn(word_t operand);
-void cmd_push_bc();
-void cmd_add_a_n(byte_t operand);
-void cmd_rst_0();
-void cmd_ret_z();
-void cmd_ret();
-void cmd_jp_z_nn(word_t operand);
-void cmd_call_z_nn(word_t operand);
-void cmd_call_nn(word_t operand);
-void cmd_adc_n(byte_t operand);
-void cmd_rst_08();
-void cmd_ret_nc();
-void cmd_pop_de();
-void cmd_jp_nc_nn(word_t operand);
-void cmd_call_nc_nn(word_t operand);
-void cmd_push_de();
-void cmd_sub_n(byte_t operand);
-void cmd_rst_10();
-void cmd_ret_c();
-void cmd_jp_c_nn(word_t operand);
-void cmd_call_c_nn(word_t operand);
-void cmd_sbc_n(byte_t operand);
-void cmd_rst_18();
-void cmd_ld_ff_n_ap(byte_t operand);
-void cmd_pop_hl();
-void cmd_ld_ff_c_a();
-void cmd_push_hl();
-void cmd_and_n(byte_t operand);
-void cmd_rst_20();
-void cmd_add_sp_n(byte_t operand);
-void cmd_jp_hl();
-void cmd_ld_nnp_a(word_t operand);
-void cmd_xor_n(byte_t operand);
-void cmd_rst_28();
-void cmd_ld_ff_ap_n(byte_t operand);
-void cmd_pop_af();
-void cmd_ld_a_ff_c();
-void cmd_di_inst();
-void cmd_push_af();
-void cmd_or_n(byte_t operand);
-void cmd_rst_30();
-void cmd_ld_hl_sp_n(byte_t operand);
-void cmd_ld_sp_hl();
-void cmd_ld_a_nnp(word_t operand);
-void cmd_ei();
-void cmd_cp_n(byte_t operand);
-void cmd_rst_38();
+#define FLAG_CARRY (1 << 4)
+#define FLAG_HALFCARRY (1 << 5)
+#define FLAG_NEGATIVE (1 << 6)
+#define FLAG_ZERO (1 << 7)
 
-#ifdef __cplusplus
-}
-#endif // __cplusplus
+#define FLAGS_IS_SET(f) (registers.F & (f))
+#define FLAGS_SET(f) (registers.F |= (f))
+#define FLAGS_CLEAR(f) (registers.F &= ~(f)) 
 
-#endif // GBE_CPU_H_
+#define INTERRUPT_VBLANK (1 << 0)
+#define INTERRUPT_LCDSTAT (1 << 1)
+#define INTERRUPT_TIMER (1 << 2)
+#define INTERRUPT_SERIAL (1 << 3)
+#define INTERRUPT_JOYPAD (1 << 4)
+
+struct cpu_t {
+    uint64_t ticks;
+} extern cpu;
+
+struct registers_t {
+    word_t PC;
+    word_t SP;
+
+    union {
+        word_t AF;
+        struct {
+            byte_t F;
+            byte_t A;
+        };
+    };
+
+    union {
+        word_t BC;
+        struct {
+            byte_t C;
+            byte_t B;
+        };
+    };
+
+    union {
+        word_t DE;
+        struct {
+            byte_t E;
+            byte_t D;
+        };
+    };
+
+    union {
+        word_t HL;
+        struct {
+            byte_t L;
+            byte_t H;
+        };
+    };
+} extern registers;
+
+struct interrupts_t {
+    byte_t master;
+    byte_t enable;
+    byte_t flags;
+    byte_t pending;
+} extern interrupts;
+
+struct memory_t {
+    byte_t cart[0x8000];
+    byte_t vram[0x2000];
+    byte_t sram[0x2000];
+    byte_t wram[0x2000];
+    byte_t oam[0xA0];
+    byte_t io[0x80];
+    byte_t hram[0x80];
+} extern memory;
+
+void storeb(byte_t value, word_t address);
+byte_t loadb(word_t address);
+
+void storew(word_t value, word_t address);
+word_t loadw(word_t address);
+
+void pushw(word_t value);
+word_t popw();
+
+void cpu_print_registers();
+
+void cpu_reset();
+void cpu_step();
+
+void interrupt_vblank();
+void interrupt_lcdstat();
+void interrupt_timer();
+void interrupt_serial();
+void interrupt_joypad();
+
+#endif // CPU_H_

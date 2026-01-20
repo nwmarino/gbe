@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -O0 -g $(shell pkg-config --cflags glfw3)
 LDFLAGS = -lGL $(shell pkg-config --libs glfw3)
 
-sources = source/gbe.c
+sources = source/cpu.c source/ppu.c source/gbe.c
 objects = $(sources:.c=.o)
 
 all: gbe clean
