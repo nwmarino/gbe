@@ -92,6 +92,7 @@ void cpu_print_registers();
 void cpu_reset();
 void cpu_step();
 
+void interrupt_step();
 void interrupt_vblank();
 void interrupt_lcdstat();
 void interrupt_timer();

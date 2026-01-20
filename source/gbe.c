@@ -31,6 +31,8 @@ int32_t main(int32_t argc, char* argv[]) {
         return 1;
     }
 
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
     GLFWwindow* window = glfwCreateWindow(300, 300, "gbe", null, null);
     if (!window) {
         printf("failed to open window!\n");
@@ -47,6 +49,7 @@ int32_t main(int32_t argc, char* argv[]) {
         uint64_t before = cpu.ticks;
         cpu_step();
         ppu_step(cpu.ticks - before);
+        interrupt_step();
         
         glfwSwapBuffers(window);
     }

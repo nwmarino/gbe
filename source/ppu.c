@@ -6,10 +6,70 @@
 struct ppu_t ppu;
 struct rgb_t framebuffer[160 * 144];
 
+byte_t tiles[384][8][8];
+struct rgb_t bg_palette[4];
+
+const struct rgb_t palette[4] = {
+    { 255, 255, 255 },
+    { 192, 192, 192 },
+    { 96, 96, 96 },
+    { 0, 0, 0 },
+};
+
+void render_scanline() {
+    int32_t map_offset = (ppu.control & GRAPHICS_CONTROL_TILEMAP) ? 0x1C00 : 0x1800;
+    map_offset += (((ppu.scanline + ppu.y_scroll) & 255) >> 3) << 5;
+
+    int32_t line_offset = (ppu.x_scroll >> 3);
+
+    int32_t x = ppu.x_scroll & 7;
+    int32_t y = (ppu.scanline + ppu.y_scroll) & 7;
+
+    int32_t pixel_offset = ppu.scanline * 160;
+
+    word_t tile = (word_t) memory.vram[map_offset + line_offset];
+    byte_t scanline_row[160];
+
+    int32_t i;
+    for (i = 0; i < 160; ++i) {
+        byte_t color = tiles[tile][y][x];
+        scanline_row[i] = color;
+
+        framebuffer[pixel_offset].r = bg_palette[color].r;
+        framebuffer[pixel_offset].g = bg_palette[color].g;
+        framebuffer[pixel_offset].b = bg_palette[color].b;
+
+        x++;
+
+        if (x == 8) {
+            x = 0;
+            line_offset = (line_offset + 1) & 31;
+            tile = memory.vram[map_offset + line_offset];
+        }
+    }
+}
+
+void update_tile(byte_t data, word_t address) {
+    address &= 0x1FFE;
+
+    word_t tile = (address >> 4) & 511;
+    word_t y = (address >> 1) & 7;
+
+    byte_t x, bit_index;
+    for (x = 0; x < 8; ++x) {
+        bit_index = 1 << (7 - x);
+
+        tiles[tile][y][x] = ((memory.vram[address] & bit_index) ? 1 : 0) + ((memory.vram[address + 1] & bit_index) ? 2 : 0);
+    }
+}
+
 void ppu_reset() {
     ppu.scanline = 0;
     ppu.mode = PPU_MODE_OAM;
     ppu.tick = 0;
+    ppu.control = 0;
+    ppu.x_scroll = 0;
+    ppu.y_scroll = 0;
 }
 
 void ppu_step(uint64_t delta) {
@@ -59,11 +119,7 @@ void ppu_step(uint64_t delta) {
         case PPU_MODE_VRAM:
             if (ppu.tick >= 172) {
                 ppu.tick -= 172;
-
-                int32_t y = ppu.scanline;
-                for (int32_t x = 0; x < 160; ++x)
-                    framebuffer[y * 160 + x] = (struct rgb_t) { 255, 0, 255 };
-
+                render_scanline();
                 ppu.mode = PPU_MODE_HBLANK;
             }
 
