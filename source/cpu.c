@@ -605,7 +605,7 @@ void store8(byte_t value, word_t address) {
         }
     } else if (address >= 0xFF80 && address <= 0xFFFE) {
         if (address == 0xFF80) {
-            printf("saw 0xFF80 write, skipping\n");
+            // @Todo: remove patch
             return;
         }
 
@@ -1168,6 +1168,18 @@ void cpu_step() {
             store8(registers.B, registers.HL);
             break;
 
+        case 0x71:
+            store8(registers.C, registers.HL);
+            break;
+
+        case 0x72:
+            store8(registers.D, registers.HL);
+            break;
+
+        case 0x73:
+            store8(registers.E, registers.HL);
+            break;
+
         case 0x77:
             store8(registers.A, registers.HL);
             break;
@@ -1479,7 +1491,7 @@ void cpu_step() {
 }
 
 void cpu_cleanup() {
-    //fclose(lg);
+    fclose(lg);
 }
 
 void interrupt_step() {
