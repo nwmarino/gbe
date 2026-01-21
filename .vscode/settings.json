@@ -4,6 +4,11 @@
             "cwd": "/home/gbe",
             "binaryPath": "/home/gbe/gbe",
             "binaryArgs": []
+        },
+        {
+            "cwd": "/home/nwm/gbe",
+            "binaryPath": "/home/nwm/gbe/gbe",
+            "binaryArgs": []
         }
     ]
 }

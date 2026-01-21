@@ -19,7 +19,8 @@ void load_rom(byte_t* cart, const char* path) {
         exit(1);
     }
 
-    fread(cart, 1, 32768, rom);
+    size_t n = fread(cart, 1, 32768, rom);
+    printf("ROM loaded: %s (%zu bytes read, truncated to 0x8000)\n", path, n);
     fclose(rom);
 }
 
@@ -34,6 +35,7 @@ int32_t main(int32_t argc, char* argv[]) {
     }
 
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
     //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
     window = glfwCreateWindow(300, 300, "gbe", null, null);

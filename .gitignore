@@ -1,3 +1,4 @@
 *.o
 *.gb
 gbe
+log.txt

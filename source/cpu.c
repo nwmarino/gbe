@@ -9,6 +9,9 @@ struct registers_t registers;
 struct interrupts_t interrupts;
 struct memory_t memory;
 
+/* Debug: count VRAM writes to diagnose missing tile data */
+static int debug_vram_writes = 0;
+
 static const char* disassemblies[256] = {
     // 0x0_
     "nop",             "ld bc, 0x%04X", "ld (bc), a",   "inc bc", 
@@ -549,11 +552,31 @@ static byte_t srl(byte_t value) {
 	return value;
 }
 
+static byte_t sla(byte_t value) {
+    if (value & 0x80) {
+        FLAGS_SET(FLAG_CARRY);
+    } else {
+        FLAGS_CLEAR(FLAG_CARRY);
+    }
+
+	value <<= 1;
+	
+    value == 0 ? FLAGS_SET(FLAG_ZERO) : FLAGS_CLEAR(FLAG_ZERO);
+	FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+	return value;
+}
+
 void store8(byte_t value, word_t address) {
     if (address <= 0x7FFF) {
         memory.cart[address] = value;
     } else if (address >= 0x8000 && address <= 0x9FFF) {
         memory.vram[address - 0x8000] = value;
+        /* Debug: log first several VRAM writes so we can see when tile data is written */
+        if (debug_vram_writes < 64) {
+            printf("DEBUG: store8 VRAM write addr=0x%04X value=0x%02X vram_index=0x%04X\n",
+                   address, value, address - 0x8000);
+            debug_vram_writes++;
+        }
     } else if (address >= 0xA000 && address <= 0xBFFF) {
         memory.sram[address - 0xA000] = value;
     } else if (address >= 0xC000 && address <= 0xDFFF) {
@@ -581,6 +604,11 @@ void store8(byte_t value, word_t address) {
             update_bg_palette(value);
         }
     } else if (address >= 0xFF80 && address <= 0xFFFE) {
+        if (address == 0xFF80) {
+            printf("saw 0xFF80 write, skipping\n");
+            return;
+        }
+
         memory.hram[address - 0xFF80] = value;
     } else if (address == 0xFFFF) {
         interrupts.enable = value;
@@ -601,7 +629,10 @@ byte_t load8(word_t address) {
     } else if (address >= 0xFE00 && address <= 0xFE9F) {
         return memory.oam[address - 0xFE00];
     } else if (address >= 0xFF00 && address <= 0xFF7F) {
-        if (address == 0xFF0F) {
+        if (address == 0xFF05 || address == 0xFF06 || address == 0xFF07) {
+            printf("timer not implemented!\n");
+            exit(1);
+        } else if (address == 0xFF0F) {
             return interrupts.flags;
         } else if (address == 0xFF40) {
             return ppu.lcdc;
@@ -643,18 +674,32 @@ word_t pop() {
     return value;    
 }
 
+FILE* lg = null;
+
 void handle_cb() {
     byte_t opcode = load8(registers.PC++);
 
-    printf("%s\n", cb_disassemblies[opcode]);
+    fprintf(lg, "%s\n", cb_disassemblies[opcode]);
 
     switch (opcode) {
+        case 0x27:
+            registers.A = sla(registers.A);
+            break;
+
         case 0x37:
             registers.A = op_swap(registers.A);
             break;
 
         case 0x38:
             registers.B = srl(registers.B);
+            break;
+
+        case 0x50:
+            op_bit(1 << 2, registers.B);
+            break;
+        
+        case 0x7E:
+            op_bit(1 << 7, load8(registers.HL));
             break;
 
         case 0x7F:
@@ -677,13 +722,11 @@ void handle_cb() {
     cpu.ticks += cb_tcycles[opcode];
 }
 
-FILE* lg = null;
-
 void cpu_print_registers() {
     if (!lg)
         lg = fopen("log.txt", "w");    
 
-    printf("A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X SP:%04X PC:%04X PCMEM:%02X,%02X,%02X,%02X\n", 
+    fprintf(lg, "A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X SP:%04X PC:%04X PCMEM:%02X,%02X,%02X,%02X\n", 
         registers.A,
         registers.F, 
         registers.B, 
@@ -699,10 +742,10 @@ void cpu_print_registers() {
         load8(registers.PC + 2), 
         load8(registers.PC + 3));
 
-    printf("IME:0x%04X IE:0x%04X IF:0x%04X\n", 
-        interrupts.master, 
-        interrupts.enable, 
-        interrupts.flags);
+    //printf("IME:0x%04X IE:0x%04X IF:0x%04X\n", 
+     //   interrupts.master, 
+      //  interrupts.enable, 
+      //  interrupts.flags);
 }
 
 void cpu_reset() {
@@ -761,21 +804,21 @@ void cpu_step() {
 
     // Load the opcode at the program counter (PC).
     byte_t opcode = load8(registers.PC++);
-    byte_t num_operands = operand_counts[opcode];
+    word_t num_operands = operand_counts[opcode];
     word_t operands = 0;
     if (num_operands == 0) {
-        printf("%s", disassemblies[opcode]);
+        fprintf(lg, "%s", disassemblies[opcode]);
     } else if (num_operands == 1) {
         operands = (word_t) load8(registers.PC);
-        printf(disassemblies[opcode], (byte_t) operands);
+        fprintf(lg, disassemblies[opcode], (byte_t) operands);
     } else if (num_operands == 2) {
         operands = load16(registers.PC);
-        printf(disassemblies[opcode], (word_t) operands);
+        fprintf(lg, disassemblies[opcode], (word_t) operands);
     }
 
-    printf("\n");
+    fprintf(lg, "\n");
 
-    registers.PC += (word_t) num_operands;
+    registers.PC += num_operands;
 
     switch (opcode) {
         case 0x00: // NOP
@@ -1013,8 +1056,12 @@ void cpu_step() {
             store8(op_inc(load8(registers.HL)), registers.HL);
             break;
 
+        case 0x35:
+            store8(op_inc(load8(registers.HL)), registers.HL);
+            break;
+
         case 0x36:
-            store8(operands, registers.HL);
+            store8((byte_t) operands, registers.HL);
             break;
 
         case 0x38:
@@ -1093,12 +1140,20 @@ void cpu_step() {
             registers.E = registers.A;
             break;
 
+        case 0x60:
+            registers.H = registers.B;
+            break;
+
         case 0x62:
             registers.H = registers.D;
             break;
 
         case 0x67:
             registers.H = registers.A;
+            break;
+
+        case 0x69:
+            registers.L = registers.C;
             break;
 
         case 0x6B:
@@ -1147,6 +1202,10 @@ void cpu_step() {
 
         case 0x80:
             op_add8(registers.B);
+            break;
+
+        case 0x85:
+            op_add8(registers.L);
             break;
 
         case 0x86:
@@ -1219,6 +1278,14 @@ void cpu_step() {
 
         case 0xC1:
             registers.BC = pop();
+            break;
+
+        case 0xC2:
+            if (!FLAGS_IS_SET(FLAG_ZERO)) {
+                registers.PC = operands;
+                cpu.ticks += 4;
+            }
+
             break;
 
         case 0xC3:
@@ -1322,6 +1389,14 @@ void cpu_step() {
             store8(registers.A, 0xFF00 + registers.C);
             break;
 
+        case 0xE5:
+            push(registers.HL);
+            break;
+
+        case 0xE6:
+            op_and((byte_t) operands);
+            break;
+
         case 0xE9:
             registers.PC = registers.HL;
             break;
@@ -1330,12 +1405,8 @@ void cpu_step() {
             store8(registers.A, operands);
             break;
 
-        case 0xE5:
-            push(registers.HL);
-            break;
-
-        case 0xE6:
-            op_and((byte_t) operands);
+        case 0xEE:
+            op_xor((byte_t) operands);
             break;
 
         case 0xEF:
