@@ -3,6 +3,7 @@
 
 #include "common.h"
 
+#include <GLFW/glfw3.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -28,20 +29,22 @@ struct rgb_t {
 };
 
 struct ppu_t {
-    byte_t scanline;
     byte_t mode;
-    byte_t control;
-    byte_t x_scroll;
-    byte_t y_scroll;
+    byte_t lcdc;
+    byte_t scy;
+    byte_t scx;
+    byte_t ly;
     uint64_t tick;
 };
+
+extern GLFWwindow* window;
 
 const extern struct rgb_t palette[4];
 
 extern struct ppu_t ppu;
 extern struct rgb_t framebuffer[160 * 144];
 
-extern byte_t tiles[384][8][8];
+extern byte_t tiles[512][8][8];
 extern struct rgb_t bg_palette[4];
 
 void ppu_reset();
@@ -49,7 +52,7 @@ void ppu_step(uint64_t delta);
 
 void draw();
 
-void update_tile(byte_t data, word_t address);
+void update_bg_palette(byte_t value);
 
 #ifdef __cplusplus
 }

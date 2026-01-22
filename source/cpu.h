@@ -78,19 +78,20 @@ struct memory_t {
     byte_t hram[0x80];
 } extern memory;
 
-void storeb(byte_t value, word_t address);
-byte_t loadb(word_t address);
+void store8(byte_t value, word_t address);
+void store16(word_t value, word_t address);
 
-void storew(word_t value, word_t address);
-word_t loadw(word_t address);
+byte_t load8(word_t address);
+word_t load16(word_t address);
 
-void pushw(word_t value);
-word_t popw();
+void push(word_t value);
+word_t pop();
 
 void cpu_print_registers();
 
 void cpu_reset();
 void cpu_step();
+void cpu_cleanup();
 
 void interrupt_step();
 void interrupt_vblank();

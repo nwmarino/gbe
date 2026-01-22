@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include <string.h>
 
+GLFWwindow* window = null;
+
 void load_rom(byte_t* cart, const char* path) {
     memset(cart, 0, 32768);
     
@@ -32,8 +34,9 @@ int32_t main(int32_t argc, char* argv[]) {
     }
 
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
-    GLFWwindow* window = glfwCreateWindow(300, 300, "gbe", null, null);
+    window = glfwCreateWindow(300, 300, "gbe", null, null);
     if (!window) {
         printf("failed to open window!\n");
         return 1;
@@ -41,7 +44,17 @@ int32_t main(int32_t argc, char* argv[]) {
 
     glfwMakeContextCurrent(window);
 
-    glfwSwapInterval(0); // no vsync
+	//glMatrixMode(GL_MODELVIEW);
+	//glLoadIdentity();
+	//glOrtho(0, 160, 144, 0, -1.0, 1.0);
+	//glShadeModel(GL_FLAT);
+
+	glEnable(GL_TEXTURE_2D);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_DITHER);
+	glDisable(GL_BLEND);
+    //glfwSwapInterval(0); // no vsync
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -50,9 +63,9 @@ int32_t main(int32_t argc, char* argv[]) {
         cpu_step();
         ppu_step(cpu.ticks - before);
         interrupt_step();
-        
-        glfwSwapBuffers(window);
     }
+
+    cpu_cleanup();
 
     glfwDestroyWindow(window);
     glfwTerminate();
