@@ -35,10 +35,9 @@ int32_t main(int32_t argc, char* argv[]) {
     }
 
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
     //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
-    window = glfwCreateWindow(300, 300, "gbe", null, null);
+    window = glfwCreateWindow(160, 144, "gbe", null, null);
     if (!window) {
         printf("failed to open window!\n");
         return 1;

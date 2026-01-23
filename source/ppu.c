@@ -87,9 +87,8 @@ void ppu_step(uint64_t delta) {
         case PPU_MODE_HBLANK:
             if (ppu.tick >= 204) {
                 ppu.tick -= 204;
-                ppu.ly++;
-
-                if (ppu.ly == 144) {
+                
+                if (++ppu.ly == 144) {
                     ppu.mode = PPU_MODE_VBLANK;
                     interrupts.flags |= INTERRUPT_VBLANK;
                 } else {
@@ -102,9 +101,7 @@ void ppu_step(uint64_t delta) {
         case PPU_MODE_VBLANK:
             if (ppu.tick >= 456) {
                 ppu.tick -= 456;
-                ppu.ly++;
-
-                if (ppu.ly > 153) {
+                if (++ppu.ly > 153) {
                     ppu.ly = 0;
                     ppu.mode = PPU_MODE_OAM;
                 }

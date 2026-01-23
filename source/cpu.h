@@ -21,6 +21,7 @@
 #define INTERRUPT_JOYPAD (1 << 4)
 
 struct cpu_t {
+    byte_t stopped;
     uint64_t ticks;
 } extern cpu;
 

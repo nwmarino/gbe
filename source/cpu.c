@@ -9,8 +9,7 @@ struct registers_t registers;
 struct interrupts_t interrupts;
 struct memory_t memory;
 
-/* Debug: count VRAM writes to diagnose missing tile data */
-static int debug_vram_writes = 0;
+FILE* lg = null;
 
 static const char* disassemblies[256] = {
     // 0x0_
@@ -143,16 +142,16 @@ static const char* cb_disassemblies[256] = {
     "rr h", "rr l", "rr (hl)", "rr a",
 
     // 0x2_
-    "sla b", "sla c", "sla d",    "sla e",
-    "sla h", "sla l", "sla (hl)", "sla a",
+    "op_sla b", "op_sla c", "op_sla d",    "op_sla e",
+    "op_sla h", "op_sla l", "op_sla (hl)", "op_sla a",
     "sra b", "sra c", "sra d",    "sra e",
     "sra h", "sra l", "sra (hl)", "sra r",
 
     // 0x3_
     "swap b", "swap c", "swap d",    "swap e",
     "swap h", "swap l", "swap (hl)", "swap a",
-    "srl b", "srl c",   "srl d",     "srl e", 
-    "srl h", "srl l",   "srl (hl)",  "srl a",
+    "op_srl b", "op_srl c",   "op_srl d",     "op_srl e", 
+    "op_srl h", "op_srl l",   "op_srl (hl)",  "op_srl a",
 
     // 0x4_
     "bit 0, b", "bit 0, c", "bit 0, d",    "bit 0, e",
@@ -305,6 +304,74 @@ static void op_xor(byte_t value) {
     FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY | FLAG_CARRY);
 }
 
+static byte_t op_rlc(byte_t value) {
+    int32_t carry = (value & 0x80) >> 7;
+
+    if (value & 0x80) {
+        FLAGS_SET(FLAG_CARRY);
+    } else {
+        FLAGS_CLEAR(FLAG_CARRY);
+    }
+
+    value <<= 1;
+    value += carry;
+
+    value == 0 ? FLAGS_SET(FLAG_ZERO) : FLAGS_CLEAR(FLAG_ZERO);
+    FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+    return value;
+}
+
+static byte_t op_rrc(byte_t value) {
+    int32_t carry = value & 0x01;
+
+    value >>= 1;
+
+    if (value) {
+        FLAGS_SET(FLAG_CARRY);
+        value |= 0x80;
+    } else {
+        FLAGS_CLEAR(FLAG_CARRY);
+    }
+
+    value == 0 ? FLAGS_SET(FLAG_ZERO) : FLAGS_CLEAR(FLAG_ZERO);
+    FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+    return value;
+}
+
+static byte_t op_rl(byte_t value) {
+    int32_t carry = FLAGS_IS_SET(FLAG_CARRY) ? 1 : 0;
+
+    if (value & 0x80) {
+        FLAGS_SET(FLAG_CARRY);
+    } else {
+        FLAGS_CLEAR(FLAG_CARRY);
+    }
+
+    value <<= 1;
+    value += carry;
+
+    value == 0 ? FLAGS_SET(FLAG_ZERO) : FLAGS_CLEAR(FLAG_ZERO);
+    FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+    return value;
+}
+
+static byte_t op_rr(byte_t value) {
+    value >>= 1;
+
+    if (FLAGS_IS_SET(FLAG_CARRY))
+        value |= 0x80;
+
+    if (value & 0x01) {
+        FLAGS_SET(FLAG_CARRY);
+    } else {
+        FLAGS_CLEAR(FLAG_CARRY);
+    }
+
+    value == 0 ? FLAGS_SET(FLAG_ZERO) : FLAGS_CLEAR(FLAG_ZERO);
+    FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+    return value;
+}
+
 /// Add |value| to register A, stores result in A.
 static void op_add8(byte_t value) {
     int32_t sum = registers.A + value;
@@ -340,15 +407,16 @@ static void op_add16(word_t value) {
         FLAGS_CLEAR(FLAG_HALFCARRY);
     }
 
-    registers.HL += value;
+    uint32_t sum = (uint32_t)(registers.HL) + (uint32_t)(value);
 
-    if (registers.HL & 0xFFFF0000) {
+    if (sum > 0xFFFF) {
         FLAGS_SET(FLAG_CARRY);
     } else {
         FLAGS_CLEAR(FLAG_CARRY);
     }
 
     FLAGS_CLEAR(FLAG_NEGATIVE);
+    registers.HL = (word_t) sum;
 }
 
 /// Subtract |value| from register A, stores result in A.
@@ -378,9 +446,8 @@ static void op_sub8(byte_t value) {
 
 /// Add |value| + carry flag to A.
 static void op_adc(byte_t value) {
-    if (FLAGS_IS_SET(FLAG_CARRY)) {
-        ++value;
-    }
+    if (FLAGS_IS_SET(FLAG_CARRY))
+        value++;
 
     int32_t add = registers.A + value;
 
@@ -390,7 +457,7 @@ static void op_adc(byte_t value) {
         FLAGS_CLEAR(FLAG_CARRY);
     }
 
-    if (add == 0) {
+    if ((add & 0xFF) == 0) {
         FLAGS_SET(FLAG_ZERO);
     } else {
         FLAGS_CLEAR(FLAG_ZERO);
@@ -402,8 +469,7 @@ static void op_adc(byte_t value) {
         FLAGS_CLEAR(FLAG_HALFCARRY);
     }
 
-    FLAGS_SET(FLAG_NEGATIVE);
-
+    FLAGS_CLEAR(FLAG_NEGATIVE);
     registers.A = (byte_t)(add & 0xFF);
 }
 
@@ -433,14 +499,6 @@ static void op_sbc(byte_t value) {
     }
 
     registers.A -= value;
-}
-
-static void op_ldb(byte_t value, byte_t* reg) {
-    *reg = value;
-}
-
-static void op_ldw(word_t value, word_t* reg) {
-    *reg = value;
 }
 
 /// Increment register |value|.
@@ -533,7 +591,7 @@ static void op_bit(byte_t bit, byte_t value) {
 	FLAGS_SET(FLAG_HALFCARRY);
 }
 
-static byte_t srl(byte_t value) {
+static byte_t op_srl(byte_t value) {
 	if (value & 0x01) {
         FLAGS_SET(FLAG_CARRY);
     } else {
@@ -552,7 +610,7 @@ static byte_t srl(byte_t value) {
 	return value;
 }
 
-static byte_t sla(byte_t value) {
+static byte_t op_sla(byte_t value) {
     if (value & 0x80) {
         FLAGS_SET(FLAG_CARRY);
     } else {
@@ -571,12 +629,6 @@ void store8(byte_t value, word_t address) {
         memory.cart[address] = value;
     } else if (address >= 0x8000 && address <= 0x9FFF) {
         memory.vram[address - 0x8000] = value;
-        /* Debug: log first several VRAM writes so we can see when tile data is written */
-        if (debug_vram_writes < 64) {
-            printf("DEBUG: store8 VRAM write addr=0x%04X value=0x%02X vram_index=0x%04X\n",
-                   address, value, address - 0x8000);
-            debug_vram_writes++;
-        }
     } else if (address >= 0xA000 && address <= 0xBFFF) {
         memory.sram[address - 0xA000] = value;
     } else if (address >= 0xC000 && address <= 0xDFFF) {
@@ -597,7 +649,7 @@ void store8(byte_t value, word_t address) {
         } else if (address == 0xFF43) {
             ppu.scx = value;
         } else if (address == 0xFF44) {
-            ppu.ly = value; /* Should be read-only. */
+            ppu.ly = value; // Should be read-only.
             printf("0xFF44 (LY) is read-only!\n");
             exit(1);
         } else if (address == 0xFF47) {
@@ -674,16 +726,198 @@ word_t pop() {
     return value;    
 }
 
-FILE* lg = null;
-
 void handle_cb() {
     byte_t opcode = load8(registers.PC++);
 
-    fprintf(lg, "%s\n", cb_disassemblies[opcode]);
+    //fprintf(lg, "%s\n", cb_disassemblies[opcode]);
 
     switch (opcode) {
+        case 0x00:
+            registers.B = op_rlc(registers.B);
+            break;
+
+        case 0x01:
+            registers.C = op_rlc(registers.C);
+            break;
+
+        case 0x02:
+            registers.D = op_rlc(registers.D);
+            break;
+
+        case 0x03:
+            registers.E = op_rlc(registers.E);
+            break;
+
+        case 0x04:
+            registers.H = op_rlc(registers.H);
+            break;
+
+        case 0x05:
+            registers.L = op_rlc(registers.L);
+            break;
+
+        case 0x06:
+            store8(op_rlc(load8(registers.HL)), registers.HL);
+            break;
+
+        case 0x07:
+            registers.A = op_rlc(registers.A);
+            break;
+
+        case 0x08:
+            registers.B = op_rrc(registers.B);
+            break;
+
+        case 0x09:
+            registers.C = op_rrc(registers.C);
+            break;
+
+        case 0x0A:
+            registers.D = op_rrc(registers.D);
+            break;
+
+        case 0x0B:
+            registers.E = op_rrc(registers.E);
+            break;
+
+        case 0x0C:
+            registers.H = op_rrc(registers.H);
+            break;
+
+        case 0x0D:
+            registers.L = op_rrc(registers.L);
+            break;
+
+        case 0x0E:
+            store8(op_rrc(load8(registers.HL)), registers.HL);
+            break;
+
+        case 0x0F:
+            registers.A = op_rrc(registers.A);
+            break;
+
+        case 0x10:
+            registers.B = op_rl(registers.B);
+            break;
+
+        case 0x11:
+            registers.C = op_rl(registers.C);
+            break;
+
+        case 0x12:
+            registers.D = op_rl(registers.D);
+            break;
+
+        case 0x13:
+            registers.E = op_rl(registers.E);
+            break;
+
+        case 0x14:
+            registers.H = op_rl(registers.H);
+            break;
+
+        case 0x15:
+            registers.L = op_rl(registers.L);
+            break;
+
+        case 0x16:
+            store8(op_rl(load8(registers.HL)), registers.HL);
+            break;
+
+        case 0x17:
+            registers.A = op_rl(registers.A);
+            break;
+
+        case 0x18:
+            registers.B = op_rr(registers.B);
+            break;
+
+        case 0x19:
+            registers.C = op_rr(registers.C);
+            break;
+
+        case 0x1A:
+            registers.D = op_rr(registers.D);
+            break;
+
+        case 0x1B:
+            registers.E = op_rr(registers.E);
+            break;
+
+        case 0x1C:
+            registers.H = op_rr(registers.H);
+            break;
+
+        case 0x1D:
+            registers.L = op_rr(registers.L);
+            break;
+
+        case 0x1E:
+            store8(op_rr(load8(registers.HL)), registers.HL);
+            break;
+
+        case 0x1F:
+            registers.A = op_rr(registers.A);
+            break;
+
+        case 0x20:
+            registers.B = op_sla(registers.B);
+            break;
+
+        case 0x21:
+            registers.C = op_sla(registers.C);
+            break;
+
+        case 0x22:
+            registers.D = op_sla(registers.D);
+            break;
+
+        case 0x23:
+            registers.E = op_sla(registers.E);
+            break;
+
+        case 0x24:
+            registers.H = op_sla(registers.H);
+            break;
+
+        case 0x25:
+            registers.L = op_sla(registers.L);
+            break;
+        
+        case 0x26:
+            store8(op_sla(load8(registers.HL)), registers.HL);
+            break;
+    
         case 0x27:
-            registers.A = sla(registers.A);
+            registers.A = op_sla(registers.A);
+            break;
+
+        case 0x30:
+            registers.B = op_swap(registers.B);
+            break;
+
+        case 0x31:
+            registers.C = op_swap(registers.C);
+            break;
+
+        case 0x32:
+            registers.D = op_swap(registers.D);
+            break;
+
+        case 0x33:
+            registers.E = op_swap(registers.E);
+            break;
+
+        case 0x34:
+            registers.H = op_swap(registers.H);
+            break;
+
+        case 0x35:
+            registers.L = op_swap(registers.L);
+            break;
+
+        case 0x36:
+            store8(op_swap(load8(registers.HL)), registers.HL);
             break;
 
         case 0x37:
@@ -691,11 +925,283 @@ void handle_cb() {
             break;
 
         case 0x38:
-            registers.B = srl(registers.B);
+            registers.B = op_srl(registers.B);
+            break;
+
+        case 0x39:
+            registers.C = op_srl(registers.C);
+            break;
+
+        case 0x3A:
+            registers.D = op_srl(registers.D);
+            break;
+
+        case 0x3B:
+            registers.E = op_srl(registers.E);
+            break;
+
+        case 0x3C:
+            registers.H = op_srl(registers.H);
+            break;
+
+        case 0x3D:
+            registers.L = op_srl(registers.L);
+            break;
+
+        case 0x3E:
+            store8(op_srl(load8(registers.HL)), registers.HL);
+            break;
+
+        case 0x3F:
+            registers.A = op_srl(registers.A);
+            break;
+
+        case 0x40:
+            op_bit(1 << 0, registers.B);
+            break;
+
+        case 0x41:
+            op_bit(1 << 0, registers.C);
+            break;
+
+        case 0x42:
+            op_bit(1 << 0, registers.D);
+            break;
+
+        case 0x43:
+            op_bit(1 << 0, registers.E);
+            break;
+
+        case 0x44:
+            op_bit(1 << 0, registers.H);
+            break;
+
+        case 0x45:
+            op_bit(1 << 0, registers.L);
+            break;
+
+        case 0x46:
+            op_bit(1 << 0, load8(registers.HL));
+            break;
+
+        case 0x47:
+            op_bit(1 << 0, registers.A);
+            break;
+
+        case 0x48:
+            op_bit(1 << 1, registers.B);
+            break;
+
+        case 0x49:
+            op_bit(1 << 1, registers.C);
+            break;
+
+        case 0x4A:
+            op_bit(1 << 1, registers.D);
+            break;
+
+        case 0x4B:
+            op_bit(1 << 1, registers.E);
+            break;
+
+        case 0x4C:
+            op_bit(1 << 1, registers.H);
+            break;
+
+        case 0x4D:
+            op_bit(1 << 1, registers.L);
+            break;
+
+        case 0x4E:
+            op_bit(1 << 1, load8(registers.HL));
+            break;
+
+        case 0x4F:
+            op_bit(1 << 1, registers.A);
             break;
 
         case 0x50:
             op_bit(1 << 2, registers.B);
+            break;
+
+        case 0x51:
+            op_bit(1 << 2, registers.C);
+            break;
+
+        case 0x52:
+            op_bit(1 << 2, registers.D);
+            break;
+
+        case 0x53:
+            op_bit(1 << 2, registers.E);
+            break;
+
+        case 0x54:
+            op_bit(1 << 2, registers.H);
+            break;
+
+        case 0x55:
+            op_bit(1 << 2, registers.L);
+            break;
+
+        case 0x56:
+            op_bit(1 << 2, load8(registers.HL));
+            break;
+
+        case 0x57:
+            op_bit(1 << 2, registers.A);
+            break;
+
+        case 0x58:
+            op_bit(1 << 3, registers.B);
+            break;
+
+        case 0x59:
+            op_bit(1 << 3, registers.C);
+            break;
+
+        case 0x5A:
+            op_bit(1 << 3, registers.D);
+            break;
+
+        case 0x5B:
+            op_bit(1 << 3, registers.E);
+            break;
+
+        case 0x5C:
+            op_bit(1 << 3, registers.H);
+            break;
+
+        case 0x5D:
+            op_bit(1 << 3, registers.L);
+            break;
+
+        case 0x5E:
+            op_bit(1 << 3, load8(registers.HL));
+            break;
+
+        case 0x5F:
+            op_bit(1 << 3, registers.A);
+            break;
+
+        case 0x60:
+            op_bit(1 << 4, registers.B);
+            break;
+
+        case 0x61:
+            op_bit(1 << 4, registers.C);
+            break;
+
+        case 0x62:
+            op_bit(1 << 4, registers.D);
+            break;
+
+        case 0x63:
+            op_bit(1 << 4, registers.E);
+            break;
+
+        case 0x64:
+            op_bit(1 << 4, registers.H);
+            break;
+
+        case 0x65:
+            op_bit(1 << 4, registers.L);
+            break;
+
+        case 0x66:
+            op_bit(1 << 4, load8(registers.HL));
+            break;
+
+        case 0x67:
+            op_bit(1 << 4, registers.A);
+            break;
+
+        case 0x68:
+            op_bit(1 << 5, registers.B);
+            break;
+
+        case 0x69:
+            op_bit(1 << 5, registers.C);
+            break;
+
+        case 0x6A:
+            op_bit(1 << 5, registers.D);
+            break;
+
+        case 0x6B:
+            op_bit(1 << 5, registers.E);
+            break;
+
+        case 0x6C:
+            op_bit(1 << 5, registers.H);
+            break;
+
+        case 0x6D:
+            op_bit(1 << 5, registers.L);
+            break;
+
+        case 0x6E:
+            op_bit(1 << 5, load8(registers.HL));
+            break;
+
+        case 0x6F:
+            op_bit(1 << 5, registers.A);
+            break;
+
+        case 0x70:
+            op_bit(1 << 6, registers.B);
+            break;
+
+        case 0x71:
+            op_bit(1 << 6, registers.C);
+            break;
+
+        case 0x72:
+            op_bit(1 << 6, registers.D);
+            break;
+
+        case 0x73:
+            op_bit(1 << 6, registers.E);
+            break;
+
+        case 0x74:
+            op_bit(1 << 6, registers.H);
+            break;
+
+        case 0x75:
+            op_bit(1 << 6, registers.L);
+            break;
+
+        case 0x76:
+            op_bit(1 << 6, load8(registers.HL));
+            break;
+
+        case 0x77:
+            op_bit(1 << 6, registers.A);
+            break;
+
+        case 0x78:
+            op_bit(1 << 7, registers.B);
+            break;
+
+        case 0x79:
+            op_bit(1 << 7, registers.C);
+            break;
+
+        case 0x7A:
+            op_bit(1 << 7, registers.D);
+            break;
+
+        case 0x7B:
+            op_bit(1 << 7, registers.E);
+            break;
+
+        case 0x7C:
+            op_bit(1 << 7, registers.H);
+            break;
+
+        case 0x7D:
+            op_bit(1 << 7, registers.L);
             break;
         
         case 0x7E:
@@ -705,6 +1211,30 @@ void handle_cb() {
         case 0x7F:
             op_bit(1 << 7, registers.A);
             break;
+
+        case 0x80:
+            registers.B &= ~(1 << 0);
+            break;
+
+        case 0x81:
+            registers.C &= ~(1 << 0);
+            break;
+
+        case 0x82:
+            registers.D &= ~(1 << 0);
+            break;
+
+        case 0x83:
+            registers.E &= ~(1 << 0);
+            break;
+
+        case 0x84:
+            registers.H &= ~(1 << 0);
+            break;
+
+        case 0x85:
+            registers.L &= ~(1 << 0);
+            break;
         
         case 0x86:
             store8(load8(registers.HL) & ~(1 << 0), registers.HL);
@@ -712,6 +1242,38 @@ void handle_cb() {
 
         case 0x87:
             registers.A &= ~(1 << 0);
+            break;
+
+        case 0x88:
+            registers.B &= ~(1 << 1);
+            break;
+
+        case 0x89:
+            registers.C &= ~(1 << 1);
+            break;
+
+        case 0x8A:
+            registers.D &= ~(1 << 1);
+            break;
+
+        case 0x8B:
+            registers.E &= ~(1 << 1);
+            break;
+
+        case 0x8E:
+            registers.H &= ~(1 << 1);
+            break;
+
+        case 0x8F:
+            registers.L &= ~(1 << 1);
+            break;
+
+        case 0x90:
+            store8(load8(registers.HL) & ~(1 << 1), registers.HL);
+            break;
+
+        case 0x91:
+            registers.A &= ~(1 << 1);
             break;
 
         default:
@@ -743,9 +1305,9 @@ void cpu_print_registers() {
         load8(registers.PC + 3));
 
     //printf("IME:0x%04X IE:0x%04X IF:0x%04X\n", 
-     //   interrupts.master, 
-      //  interrupts.enable, 
-      //  interrupts.flags);
+    //      interrupts.master, 
+    //      interrupts.enable, 
+    //      interrupts.flags);
 }
 
 void cpu_reset() {
@@ -764,6 +1326,7 @@ void cpu_reset() {
     interrupts.enable = 0;
     interrupts.flags = 0;
 
+    cpu.stopped = 0;
     cpu.ticks = 0;
 
     store8(0x00, 0xFF05);
@@ -807,16 +1370,16 @@ void cpu_step() {
     word_t num_operands = operand_counts[opcode];
     word_t operands = 0;
     if (num_operands == 0) {
-        fprintf(lg, "%s", disassemblies[opcode]);
+        //fprintf(lg, "%s", disassemblies[opcode]);
     } else if (num_operands == 1) {
         operands = (word_t) load8(registers.PC);
-        fprintf(lg, disassemblies[opcode], (byte_t) operands);
+        //fprintf(lg, disassemblies[opcode], (byte_t) operands);
     } else if (num_operands == 2) {
         operands = load16(registers.PC);
-        fprintf(lg, disassemblies[opcode], (word_t) operands);
+       // fprintf(lg, disassemblies[opcode], (word_t) operands);
     }
 
-    fprintf(lg, "\n");
+    //fprintf(lg, "\n");
 
     registers.PC += num_operands;
 
@@ -855,6 +1418,19 @@ void cpu_step() {
             registers.B = (byte_t) operands;
             break;
 
+        case 0x07: {
+            // RLCA
+            byte_t carry = (registers.A & 0x80) >> 7;
+
+            carry ? FLAGS_SET(FLAG_CARRY) : FLAGS_CLEAR(FLAG_CARRY);
+            
+            registers.A >>= 1;
+            registers.A += carry;
+
+            FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_ZERO | FLAG_HALFCARRY);
+            break;
+        }
+
         case 0x08:
             store16(registers.SP, operands);
             break;
@@ -883,6 +1459,23 @@ void cpu_step() {
             registers.C = (byte_t) operands;
             break;
 
+        case 0x0F: {
+            // RRCA
+            byte_t carry = registers.A & 0x01;
+            carry ? FLAGS_SET(FLAG_CARRY) : FLAGS_CLEAR(FLAG_CARRY);
+
+            registers.A >>= 1;
+            if (carry)
+                registers.A |= 0x80;
+
+            FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_ZERO | FLAG_HALFCARRY);
+            break;
+        }
+
+        case 0x10:
+            cpu.stopped = 1;
+            break;
+
         case 0x11:
             registers.DE = operands;
             break;
@@ -907,6 +1500,18 @@ void cpu_step() {
             registers.D = (byte_t) operands;
             break;
 
+        case 0x17: {
+            // RLA
+            int32_t carry = FLAGS_IS_SET(FLAG_CARRY);
+            (registers.A & 0x80) ? FLAGS_SET(FLAG_CARRY) : FLAGS_CLEAR(FLAG_CARRY);
+
+            registers.A <<= 1;
+            registers.A += carry;
+
+            FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_ZERO | FLAG_HALFCARRY);
+            break;
+        }
+
         case 0x18:
             registers.PC += (signed char) operands;
             break;
@@ -919,8 +1524,20 @@ void cpu_step() {
             registers.A = load8(registers.DE);
             break;
 
+        case 0x1B:
+            registers.DE--;
+            break;
+
         case 0x1C:
             registers.E = op_inc(registers.E);
+            break;
+
+        case 0x1D:
+            registers.E = op_dec(registers.E);
+            break;
+
+        case 0x1E:
+            registers.E = load8(operands);
             break;
 
         case 0x1F: {
@@ -969,6 +1586,9 @@ void cpu_step() {
         case 0x24:
             registers.H = op_inc(registers.H);
             break;
+
+        case 0x25:
+            registers.H = op_dec(registers.H);
 
         case 0x26:
             registers.H = (byte_t) operands;
@@ -1019,8 +1639,16 @@ void cpu_step() {
             break;
         }
 
+        case 0x29:
+            op_add16(registers.HL);
+            break;
+
         case 0x2A:
             registers.A = load8(registers.HL++);
+            break;
+
+        case 0x2B:
+            registers.HL--;
             break;
 
         case 0x2C:
@@ -1031,13 +1659,13 @@ void cpu_step() {
             registers.L = op_dec(registers.L);
             break;
 
+        case 0x2E:
+            registers.L = (byte_t) operands;
+            break;
+
         case 0x2F:
             registers.A = ~registers.A;
             FLAGS_SET(FLAG_NEGATIVE | FLAG_HALFCARRY);
-            break;
-
-        case 0x31:
-            registers.SP = operands;
             break;
 
         case 0x30:
@@ -1048,8 +1676,16 @@ void cpu_step() {
 
             break;
 
+        case 0x31:
+            registers.SP = operands;
+            break;
+
         case 0x32:
             store8(registers.A, registers.HL--);
+            break;
+
+        case 0x33:
+            registers.SP++;
             break;
 
         case 0x34:
@@ -1064,6 +1700,12 @@ void cpu_step() {
             store8((byte_t) operands, registers.HL);
             break;
 
+        case 0x37:
+            // SCF
+            FLAGS_SET(FLAG_CARRY);
+            FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_CARRY);
+            break;
+
         case 0x38:
             if (FLAGS_IS_SET(FLAG_CARRY)) {
                 registers.PC += (signed char) operands;
@@ -1071,6 +1713,9 @@ void cpu_step() {
             }
 
             break;
+
+        case 0x39:
+            op_add16(registers.SP);
 
         case 0x3A:
             registers.A = load8(registers.HL--);
@@ -1092,12 +1737,64 @@ void cpu_step() {
             registers.A = (byte_t) operands;
             break;
 
+        case 0x3F: {
+            // CCF
+            if (FLAGS_IS_SET(FLAG_CARRY)) {
+                FLAGS_CLEAR(FLAG_CARRY);
+            } else {
+                FLAGS_SET(FLAG_CARRY);
+            }
+
+            FLAGS_CLEAR(FLAG_NEGATIVE | FLAG_HALFCARRY);
+            break;
+        }
+
+        case 0x41:
+            registers.B = registers.C;
+            break;
+
+        case 0x42:
+            registers.B = registers.D;
+            break;
+
+        case 0x43:
+            registers.B = registers.E;
+            break;
+
+        case 0x44:
+            registers.B = registers.H;
+            break;
+
+        case 0x45:
+            registers.B = registers.L;
+            break;
+
         case 0x46:
             registers.B = load8(registers.HL);
             break;
 
         case 0x47:
             registers.B = registers.A;
+            break;
+
+        case 0x48:
+            registers.C = registers.B;
+            break;
+
+        case 0x4A:
+            registers.C = registers.D;
+            break;
+
+        case 0x4B:
+            registers.C = registers.E;
+            break;
+
+        case 0x4C:
+            registers.C = registers.H;
+            break;
+
+        case 0x4D:
+            registers.C = registers.L;
             break;
 
         case 0x4E:
@@ -1108,8 +1805,24 @@ void cpu_step() {
             registers.C = registers.A;
             break;
 
+        case 0x50:
+            registers.D = registers.B;
+            break;
+
+        case 0x51:
+            registers.D = registers.C;
+            break;
+
+        case 0x53:
+            registers.D = registers.E;
+            break;
+
         case 0x54:
             registers.D = registers.H;
+            break;
+
+        case 0x55:
+            registers.D = registers.L;
             break;
 
         case 0x56:
@@ -1118,6 +1831,14 @@ void cpu_step() {
 
         case 0x57:
             registers.D = registers.A;
+            break;
+
+        case 0x58:
+            registers.E = registers.B;
+            break;
+
+        case 0x59:
+            registers.E = registers.C;
             break;
 
         case 0x5A:
@@ -1144,20 +1865,52 @@ void cpu_step() {
             registers.H = registers.B;
             break;
 
+        case 0x61:
+            registers.H = registers.C;
+            break;
+
         case 0x62:
             registers.H = registers.D;
+            break;
+
+        case 0x63:
+            registers.H = registers.E;
+            break;
+
+        case 0x65:
+            registers.H = registers.L;
+            break;
+
+        case 0x66:
+            registers.H = load8(registers.HL);
             break;
 
         case 0x67:
             registers.H = registers.A;
             break;
 
+        case 0x68:
+            registers.L = registers.B;
+            break;
+
         case 0x69:
             registers.L = registers.C;
             break;
 
+        case 0x6A:
+            registers.L = registers.D;
+            break;
+
         case 0x6B:
             registers.L = registers.E;
+            break;
+
+        case 0x6C:
+            registers.L = registers.H;
+            break;
+
+        case 0x6E:
+            registers.L = load8(registers.HL);
             break;
 
         case 0x6F:
@@ -1179,6 +1932,16 @@ void cpu_step() {
         case 0x73:
             store8(registers.E, registers.HL);
             break;
+
+        case 0x74:
+            store8(registers.H, registers.HL);
+            break;
+
+        case 0x75:
+            store8(registers.L, registers.HL);
+            break;
+
+        // HALT 0x76
 
         case 0x77:
             store8(registers.A, registers.HL);
@@ -1216,6 +1979,22 @@ void cpu_step() {
             op_add8(registers.B);
             break;
 
+        case 0x81:
+            op_add8(registers.C);
+            break;
+
+        case 0x82:
+            op_add8(registers.D);
+            break;
+
+        case 0x83:
+            op_add8(registers.E);
+            break;
+
+        case 0x84:
+            op_add8(registers.H);
+            break;
+
         case 0x85:
             op_add8(registers.L);
             break;
@@ -1228,36 +2007,155 @@ void cpu_step() {
             op_add8(registers.A);
             break;
 
+        case 0x88:
+            op_adc(registers.B);
+            break;
+
         case 0x89:
             op_adc(registers.C);
+            break;
+
+        case 0x8A:
+            op_adc(registers.D);
+            break;
+
+        case 0x8B:
+            op_adc(registers.E);
             break;
 
         case 0x8C:
             op_adc(registers.H);
             break;
 
+        case 0x8D:
+            op_adc(load8(registers.HL));
+            break;
+
         case 0x8E:
             op_adc(load8(registers.HL));
+            break;
+
+        case 0x8F:
+            op_adc(registers.A);
+            break;
+
+        case 0x90:
+            op_sub8(registers.B);
+            break;
+
+        case 0x91:
+            op_sub8(registers.C);
             break;
 
         case 0x92:
             op_sub8(registers.D);
             break;
 
+        case 0x93:
+            op_sub8(registers.E);
+            break;
+
+        case 0x94:
+            op_sub8(registers.H);
+            break;
+
+        case 0x95:
+            op_sub8(registers.L);
+            break;
+
+        case 0x96:
+            op_sub8(load8(registers.HL));
+            break;
+
+        case 0x97:
+            op_sub8(registers.A);
+            break;
+
+        case 0x98:
+            op_sbc(registers.B);
+
         case 0x99:
             op_sbc(registers.C);
+            break;
+
+        case 0x9A:
+            op_sbc(registers.D);
+            break;
+
+        case 0x9B:
+            op_sbc(registers.E);
+            break;
+
+        case 0x9C:
+            op_sbc(registers.H);
+            break;
+
+        case 0x9D:
+            op_sbc(registers.L);
+            break;
+
+        case 0x9E:
+            op_sbc(load8(registers.HL));
+            break;
+
+        case 0x9F:
+            op_sbc(registers.A);
+            break;
+
+        case 0xA0:
+            op_and(registers.B);
             break;
 
         case 0xA1:
             op_and(registers.C);
             break;
 
+        case 0xA2:
+            op_and(registers.D);
+            break;
+
+        case 0xA3:
+            op_and(registers.E);
+            break;
+
+        case 0xA4:
+            op_and(registers.H);
+            break;
+
+        case 0xA5:
+            op_and(registers.L);
+            break;
+
+        case 0xA6:
+            op_and(load8(registers.HL));
+            break;
+
         case 0xA7:
             op_and(registers.A);
             break;
 
+        case 0xA8:
+            op_xor(registers.B);
+            break;
+
         case 0xA9:
             op_xor(registers.C);
+            break;
+
+        case 0xAA:
+            op_xor(registers.D);
+            break;
+
+        case 0xAB:
+            op_xor(registers.E);
+            break;
+
+        case 0xAC:
+            op_xor(registers.H);
+            break;
+
+        case 0xAD:
+            op_xor(registers.L);
             break;
 
         case 0xAE:
@@ -1276,11 +2174,64 @@ void cpu_step() {
             op_or(registers.C);
             break;
 
+        case 0xB2:
+            op_or(registers.D);
+            break;
+
+        case 0xB3:
+            op_or(registers.E);
+            break;
+
+        case 0xB4:
+            op_or(registers.H);
+            break;
+
+        case 0xB5:
+            op_or(registers.L);
+            break;
+        
+        case 0xB6:
+            op_or(load8(registers.HL));
+            break;
+
         case 0xB7:
             op_or(registers.A);
             break;
 
+        case 0xB8:
+            op_cp(registers.B);
+            break;
+        
+        case 0xB9:
+            op_cp(registers.C);
+            break;
+
+        case 0xBA:
+            op_cp(registers.D);
+            break;
+
+        case 0xBB:
+            op_cp(registers.E);
+            break;
+
+        case 0xBC:
+            op_cp(registers.H);
+            break;
+
+        case 0xBD:
+            op_cp(registers.L);
+            break;
+
+        case 0xBE:
+            op_cp(load8(registers.HL));
+            break;
+
+        case 0xBF:
+            op_cp(registers.A);
+            break;
+
         case 0xC0:
+            // RET NZ
             if (!FLAGS_IS_SET(FLAG_ZERO)) {
                 registers.PC = pop();
                 cpu.ticks += 12;
@@ -1321,6 +2272,12 @@ void cpu_step() {
             op_add8((byte_t) operands);
             break;
 
+        case 0xC7:
+            // rst 0h
+            push(registers.PC);
+            registers.PC = 0x0000;
+            break;
+
         case 0xC8:
             if (FLAGS_IS_SET(FLAG_ZERO)) {
                 registers.PC = pop();
@@ -1345,9 +2302,27 @@ void cpu_step() {
             handle_cb();
             break;
 
+        case 0xCC:
+            // call z nn
+            if (FLAGS_IS_SET(FLAG_ZERO)) {
+                registers.PC = operands;
+                cpu.ticks += 4;
+            }
+
+            break;
+
         case 0xCD:
             push(registers.PC);
             registers.PC = operands;
+            break;
+
+        case 0xCE:
+            op_adc((byte_t) operands);
+            break;
+
+        case 0xCF:
+            push(registers.PC);
+            registers.PC = 0x0008;
             break;
 
         case 0xD0:
@@ -1362,12 +2337,36 @@ void cpu_step() {
             registers.DE = pop();
             break;
 
+        case 0xD2:
+            // jp nc nn
+            if (!FLAGS_IS_SET(FLAG_CARRY)) {
+                registers.PC = operands;
+                cpu.ticks += 4;
+            }
+
+            break;
+
+        case 0xD4:
+            // call nc nn
+            if (!FLAGS_IS_SET(FLAG_CARRY)) {
+                push(registers.PC);
+                registers.PC = operands;
+                cpu.ticks += 12;
+            }
+
+            break;
+
         case 0xD5:
             push(registers.DE);
             break;
 
         case 0xD6:
             op_sub8((byte_t) operands);
+            break;
+
+        case 0xD7:
+            push(registers.PC);
+            registers.PC = 0x0010;
             break;
 
         case 0xD8:
@@ -1378,11 +2377,33 @@ void cpu_step() {
 
             break;
 
-        case 0xD9: {
+        case 0xD9:
             registers.PC = pop();
             interrupts.master = 1;
             break;
-        }
+
+        case 0xDA:
+            // jp c nn
+            if (FLAGS_IS_SET(FLAG_CARRY)) {
+                registers.PC = operands;
+                cpu.ticks += 4;
+            }
+
+            break;
+
+        case 0xDC:
+            // call c nn
+            if (FLAGS_IS_SET(FLAG_CARRY)) {
+                push(registers.PC);
+                registers.PC = operands;
+                cpu.ticks += 12;
+            }
+
+            break;
+
+        case 0xDE:
+            op_sbc((byte_t) operands);
+            break;
 
         case 0xDF:
             push(registers.PC);
@@ -1409,6 +2430,32 @@ void cpu_step() {
             op_and((byte_t) operands);
             break;
 
+        case 0xE7:
+            push(registers.PC);
+            registers.PC = 0x0020;
+            break;
+
+        case 0xE8: {
+            int32_t res = registers.SP + operands;
+
+            if (res & 0xFFFF0000) {
+                FLAGS_SET(FLAG_CARRY);
+            } else {
+                FLAGS_CLEAR(FLAG_CARRY);
+            }
+
+            registers.SP = res & 0xFFFF;
+
+            if (((registers.SP & 0x0F) + ((byte_t)(operands) & 0x0F)) > 0x0F) {
+                FLAGS_SET(FLAG_HALFCARRY);
+            } else {
+                FLAGS_CLEAR(FLAG_HALFCARRY);
+            }
+
+            FLAGS_CLEAR(FLAG_ZERO | FLAG_NEGATIVE);
+            break;
+        }
+
         case 0xE9:
             registers.PC = registers.HL;
             break;
@@ -1427,11 +2474,15 @@ void cpu_step() {
             break;
 
         case 0xF0:
-            registers.A = load8((word_t)(0xFF00 + (byte_t) operands));
+            registers.A = load8(0xFF00 + (byte_t)(operands));
             break;
 
         case 0xF1:
             registers.AF = pop();
+            break;
+
+        case 0xF2:
+            registers.A = load8(0xFF00 + registers.C);
             break;
 
         case 0xF3:

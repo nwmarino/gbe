@@ -2,3 +2,6 @@
 *.gb
 gbe
 log.txt
+gameboy-doctor
+opcode_annotations.json
+truth/
